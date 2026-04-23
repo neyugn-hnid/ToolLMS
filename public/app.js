@@ -1,321 +1,458 @@
-// Tab switching
-const tabBtns = document.querySelectorAll('.tab-btn');
-const tabContents = document.querySelectorAll('.tab-content');
+// ===== CONSTANTS =====
+const ANSWER_LABELS = { '1': 'A', '2': 'B', '3': 'C', '4': 'D' };
 
-tabBtns.forEach(btn => {
+// ===== TABS =====
+document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-        const targetTab = btn.dataset.tab;
-        
-        // Remove active class from all tabs and contents
-        tabBtns.forEach(b => b.classList.remove('active'));
-        tabContents.forEach(c => c.classList.remove('active'));
-        
-        // Add active class to clicked tab and corresponding content
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         btn.classList.add('active');
-        document.getElementById(targetTab + 'Tab').classList.add('active');
+        document.getElementById(btn.dataset.tab + 'Tab').classList.add('active');
     });
 });
 
-// Answer form elements
-const form = document.getElementById('searchForm');
+// ===== TOKEN MODAL =====
+const tokenBtn = document.getElementById('tokenBtn');
+const tokenModal = document.getElementById('tokenModal');
+const modalCloseBtn = document.getElementById('modalCloseBtn');
+
+tokenBtn.addEventListener('click', () => tokenModal.style.display = 'flex');
+modalCloseBtn.addEventListener('click', () => tokenModal.style.display = 'none');
+window.addEventListener('click', e => { if (e.target === tokenModal) tokenModal.style.display = 'none'; });
+
+document.getElementById('updateTokenForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    let token = document.getElementById('tokenInput').value.trim().replace(/^Bearer\s+/i, '');
+    const btn = e.target.querySelector('button[type="submit"]');
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = ' Đang cập nhật...';
+    try {
+        const res = await fetch('/api/update-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(' Token đã được cập nhật thành công!', 'success');
+            tokenModal.style.display = 'none';
+            e.target.reset();
+        } else {
+            showToast(' Cập nhật thất bại: ' + (data.error || 'Lỗi không xác định'), 'error');
+        }
+    } catch (err) {
+        showToast(' Lỗi: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+    }
+});
+
+// ===== FIND ANSWERS (lesson_id) =====
+const searchForm = document.getElementById('searchForm');
 const loading = document.getElementById('loading');
 const results = document.getElementById('results');
 const submitBtn = document.getElementById('submitBtn');
-const btnText = submitBtn.querySelector('.btn-text');
-const btnLoader = submitBtn.querySelector('.btn-loader');
 
-// Video form elements
+searchForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const lessonId = document.getElementById('lessonId').value.trim();
+    if (!lessonId) return showToast('Vui lòng nhập Lesson ID', 'error');
+
+    setLoading(submitBtn, loading, results, true);
+
+    try {
+        const res = await fetch('/api/find-answers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lesson_id: lessonId })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+        displayAnswers(data, results);
+    } catch (err) {
+        showError(results, err.message);
+    } finally {
+        setLoading(submitBtn, loading, results, false);
+    }
+});
+
+function displayAnswers(data, container) {
+    const { questions, correctAnswers } = data;
+    const validQs = questions ? questions.filter(q => q.question_number) : [];
+    if (!validQs.length) {
+        container.innerHTML = `<div class="question-card"><p>Không tìm thấy câu hỏi nào cho Lesson ID này.</p></div>`;
+        return;
+    }
+    window._lastAnswerData = data;
+
+    let html = `
+        <div class="summary-bar">
+            <h3> Kết quả tìm kiếm</h3>
+            <span class="badge badge-blue"> ${validQs.length} câu hỏi</span>
+            <div style="margin-left:auto; display:flex; gap: 8px;">
+                <button class="btn-primary" style="background:#3b82f6; padding:8px 18px;font-size:0.85rem;"
+                    onclick='startPracticeMode(window._lastAnswerData.questions, window._lastAnswerData.correctAnswers, "Luyện tập: Đáp án")'>
+                     Luyện Tập (Azota)
+                </button>
+                <button class="btn-primary" style="padding:8px 18px;font-size:0.85rem;"
+                    onclick="downloadAsWord(window._lastAnswerData.questions, window._lastAnswerData.correctAnswers, 'dap-an.doc')">
+                     Tải Word
+                </button>
+            </div>
+        </div>`;
+
+    validQs.forEach((q, i) => {
+        const num = i + 1;
+        const correctAnswer = correctAnswers[q.id];
+        html += `
+        <div class="question-card">
+            <div class="question-meta">Câu ${num}</div>
+            <div class="question-text">${stripHtml(q.question_direction)}</div>
+            <div class="answers">`;
+        if (q.answer_option && Array.isArray(q.answer_option)) {
+            q.answer_option.forEach(opt => {
+                const label = ANSWER_LABELS[opt.id] || opt.id;
+                html += `<div class="answer-option">${label}. ${stripHtml(opt.value)}</div>`;
+            });
+        }
+        html += `</div></div>`;
+    });
+    container.innerHTML = html;
+}
+
+// ===== COURSE QUESTIONS (class_id) =====
+const courseForm = document.getElementById('courseForm');
+const courseLoading = document.getElementById('courseLoading');
+const courseResults = document.getElementById('courseResults');
+const courseSubmitBtn = document.getElementById('courseSubmitBtn');
+const courseLoadingMsg = document.getElementById('courseLoadingMsg');
+
+courseForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const classId = document.getElementById('classId').value.trim();
+    if (!classId) return showToast('Vui lòng nhập Class ID', 'error');
+
+    setLoading(courseSubmitBtn, courseLoading, courseResults, true);
+    courseLoadingMsg.textContent = 'Đang lấy thông tin môn học...';
+
+    try {
+        const res = await fetch(`/api/class-questions?class_id=${encodeURIComponent(classId)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+        displayCourseQuestions(data, courseResults);
+    } catch (err) {
+        showError(courseResults, err.message);
+    } finally {
+        setLoading(courseSubmitBtn, courseLoading, courseResults, false);
+    }
+});
+
+function displayCourseQuestions(data, container) {
+    const { class_name, total_questions, lesson_summary, questions, correctAnswers } = data;
+    const validQs = questions ? questions.filter(q => q.question_number) : [];
+
+    if (!validQs.length) {
+        container.innerHTML = `<div class="question-card"><p>Không tìm thấy câu hỏi nào cho môn này.</p></div>`;
+        return;
+    }
+    window._lastCourseData = data;
+
+    const summaryCount = lesson_summary ? lesson_summary.length : '?';
+    let html = `
+        <div class="summary-bar">
+            <h3> ${class_name}</h3>
+        </div>
+        <div class="summary-bar" style="margin-bottom:24px;">
+            <span class="badge badge-blue"> ${summaryCount} bài quiz</span>
+            <span class="badge badge-green">️ ${validQs.length} câu hỏi</span>
+            <div style="margin-left:auto; display:flex; gap: 8px;">
+                <button class="btn-primary" style="background:#3b82f6; padding:8px 18px;font-size:0.85rem;"
+                    onclick='startPracticeMode(window._lastCourseData.questions, window._lastCourseData.correctAnswers, window._lastCourseData.class_name)'>
+                     Luyện Tập Toàn Môn
+                </button>
+                <button class="btn-primary" style="padding:8px 18px;font-size:0.85rem;"
+                    onclick="downloadAsWord(window._lastCourseData.questions, window._lastCourseData.correctAnswers, 'cau-hoi-mon-hoc.doc')">
+                     Tải Word
+                </button>
+            </div>
+        </div>`;
+
+    // Flat list, đánh số từ 1
+    validQs.forEach((q, i) => {
+        const num = i + 1;
+        const correctAnswer = correctAnswers ? correctAnswers[q.id] : null;
+        html += `
+        <div class="question-card">
+            <div class="question-meta">Câu ${num}</div>
+            <div class="question-text">${stripHtml(q.question_direction)}</div>
+            <div class="answers">`;
+        if (q.answer_option && Array.isArray(q.answer_option)) {
+            q.answer_option.forEach(opt => {
+                const label = ANSWER_LABELS[opt.id] || opt.id;
+                const isCorrect = correctAnswer === opt.id;
+                html += `<div class="answer-option ${isCorrect ? 'correct' : ''}">${label}. ${stripHtml(opt.value)}</div>`;
+            });
+        }
+        html += `</div></div>`;
+    });
+
+    container.innerHTML = html;
+}
+
+
+
+function downloadAsWord(questions, correctAnswers, filename) {
+    const styles = `
+        body { font-family: Times New Roman, serif; font-size: 13pt; margin: 2cm; }
+        p { margin: 4pt 0; line-height: 1.5; }
+        .q-header { font-weight: bold; margin-top: 14pt; }
+        .opt { margin-left: 20pt; }
+        .correct { font-weight: bold; }
+    `;
+
+    const validQs = (questions || []).filter(q => q.question_number);
+    let body = '';
+    validQs.forEach((q, i) => {
+        const num = i + 1;
+        const qText = stripHtml(q.question_direction);
+        body += `<p class="q-header">Câu ${num}. ${qText}</p>`;
+        if (q.answer_option && Array.isArray(q.answer_option)) {
+            q.answer_option.forEach(opt => {
+                const label = ANSWER_LABELS[opt.id] || opt.id;
+                const optText = stripHtml(opt.value);
+                const isCorrect = correctAnswers && correctAnswers[q.id] === opt.id;
+                
+                if (isCorrect) {
+                    body += `<p class="opt"><b>${label}. ${optText}</b></p>`;
+                } else {
+                    body += `<p class="opt">${label}. ${optText}</p>`;
+                }
+            });
+        }
+        body += `<p> </p>`;
+    });
+
+    const html = `
+        <html xmlns:o='urn:schemas-microsoft-com:office:office'
+              xmlns:w='urn:schemas-microsoft-com:office:word'
+              xmlns='http://www.w3.org/TR/REC-html40'>
+        <head><meta charset='utf-8'><style>${styles}</style></head>
+        <body>${body}</body></html>`;
+
+    const blob = new Blob(['\ufeff', html], { type: 'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(' Đã tải file Word!', 'success');
+}
+
+// ===== PRACTICE MODE =====
+let practiceState = { questions: [], correctAnswers: {}, userAnswers: {} };
+
+function startPracticeMode(questions, correctAnswers, title) {
+    const validQs = (questions || []).filter(q => q.question_number);
+    if (!validQs.length) return showToast('Không có câu hỏi để luyện tập!', 'error');
+
+    practiceState.questions = validQs;
+    practiceState.correctAnswers = correctAnswers || {};
+    practiceState.userAnswers = {};
+
+    renderPracticeMode(title);
+}
+
+function renderPracticeMode(title) {
+    const mainContainer = document.querySelector('main');
+    
+    // Hide all tabs
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    
+    let html = `
+        <div class="practice-container">
+            <div class="practice-header">
+                <h2> Luyện Tập: ${title}</h2>
+                <button class="btn-primary btn-outline" onclick="exitPracticeMode()"> Thoát</button>
+            </div>
+            
+            <div class="practice-layout">
+                <div class="practice-main">
+                    ${practiceState.questions.map((q, i) => `
+                        <div class="question-card" id="q-card-${q.id}">
+                            <div class="question-meta" id="q-meta-${q.id}">Câu ${i + 1}</div>
+                            <div class="question-text">${stripHtml(q.question_direction)}</div>
+                            <div class="answers">
+                                ${(q.answer_option || []).map(opt => `
+                                    <div class="answer-option practice-opt" id="opt-${q.id}-${opt.id}" 
+                                        onclick="selectPracticeAnswer(${q.id}, ${opt.id})">
+                                        ${ANSWER_LABELS[opt.id] || opt.id}. ${stripHtml(opt.value)}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                
+                <div class="practice-sidebar">
+                    <h3>Bảng câu hỏi</h3>
+                    <div class="nav-grid">
+                        ${practiceState.questions.map((q, i) => `
+                            <a href="#q-card-${q.id}" class="nav-box" id="nav-${q.id}">${i + 1}</a>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    let practiceWrap = document.getElementById('practiceWrap');
+    if (!practiceWrap) {
+        practiceWrap = document.createElement('div');
+        practiceWrap.id = 'practiceWrap';
+        mainContainer.appendChild(practiceWrap);
+    }
+    practiceWrap.innerHTML = html;
+    practiceWrap.style.display = 'block';
+}
+
+function selectPracticeAnswer(qId, optId) {
+    if (practiceState.userAnswers[qId]) return; // đã trả lời rồi thì không cho đổi
+
+    practiceState.userAnswers[qId] = optId;
+    
+    // Khóa không cho click tiếp câu này
+    document.querySelectorAll(`#q-card-${qId} .practice-opt`).forEach(el => el.style.pointerEvents = 'none');
+    
+    const correctOpt = practiceState.correctAnswers[qId];
+    const userEl = document.getElementById(`opt-${qId}-${optId}`);
+    const nav = document.getElementById(`nav-${qId}`);
+    
+    if (optId == correctOpt) {
+        if (userEl) userEl.classList.add('review-correct');
+        if (nav) nav.classList.add('review-correct-nav');
+    } else {
+        if (userEl) userEl.classList.add('review-wrong');
+        if (nav) nav.classList.add('review-wrong-nav');
+        
+        // Bật sáng đáp án đúng cho user biết
+        const correctEl = document.getElementById(`opt-${qId}-${correctOpt}`);
+        if (correctEl) correctEl.classList.add('review-correct');
+    }
+}
+
+function exitPracticeMode() {
+    document.getElementById('practiceWrap').style.display = 'none';
+    
+    // Show active tab
+    const activeTabObj = document.querySelector('.tab-btn.active');
+    if (activeTabObj) {
+        document.getElementById(activeTabObj.dataset.tab + 'Tab').classList.add('active');
+    }
+}
+
+// ===== HELPERS =====
+
 const videoForm = document.getElementById('videoForm');
 const videoLoading = document.getElementById('videoLoading');
 const videoResults = document.getElementById('videoResults');
 const videoSubmitBtn = document.getElementById('videoSubmitBtn');
-const videoBtnText = videoSubmitBtn.querySelector('.btn-text');
-const videoBtnLoader = videoSubmitBtn.querySelector('.btn-loader');
 
-// Token modal elements
-const tokenBtn = document.getElementById('tokenBtn');
-const tokenModal = document.getElementById('tokenModal');
-const closeModal = tokenModal.querySelector('.close');
-const updateTokenForm = document.getElementById('updateTokenForm');
-
-// Show modal
-tokenBtn.addEventListener('click', () => {
-    tokenModal.style.display = 'flex';
-});
-
-// Close modal
-closeModal.addEventListener('click', () => {
-    tokenModal.style.display = 'none';
-});
-
-window.addEventListener('click', (e) => {
-    if (e.target === tokenModal) {
-        tokenModal.style.display = 'none';
-    }
-});
-
-// Handle update token form
-updateTokenForm.addEventListener('submit', async (e) => {
+videoForm.addEventListener('submit', async e => {
     e.preventDefault();
-    
-    let token = document.getElementById('tokenInput').value.trim();
-    // Remove 'Bearer ' if user included it
-    token = token.replace(/^Bearer\s+/i, '');
-    
-    const submitBtn = updateTokenForm.querySelector('button');
-    const originalText = submitBtn.textContent;
+    const trackingId = document.getElementById('trackingId').value.trim();
+    const videoDuration = document.getElementById('videoDuration').value.trim();
+    if (!trackingId) return showToast('Vui lòng nhập Tracking ID', 'error');
 
-    submitBtn.disabled = true;
-    submitBtn.textContent = '⏳ Đang cập nhật...';
+    setLoading(videoSubmitBtn, videoLoading, videoResults, true);
 
     try {
-        const response = await fetch('/api/update-token', {
+        const res = await fetch('/api/bypass-video', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ token })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tracking_id: trackingId, video_duration: videoDuration || null })
         });
-
-        const data = await response.json();
-
-        if (response.ok) {
-            alert('Token đã được cập nhật thành công!');
-            tokenModal.style.display = 'none';
-            updateTokenForm.reset();
-        } else {
-            alert('Cập nhật thất bại: ' + (data.error || 'Unknown error'));
-        }
-    } catch (error) {
-        alert('Lỗi: ' + error.message);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+        displayVideoResults(data, videoResults);
+    } catch (err) {
+        showError(videoResults, err.message);
     } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = originalText;
+        setLoading(videoSubmitBtn, videoLoading, videoResults, false);
     }
 });
 
-form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const lessonId = document.getElementById('lessonId').value.trim();
-
-    if (!lessonId) {
-        alert('Vui lòng nhập Lesson ID');
-        return;
-    }
-
-    // Show loading state
-    loading.style.display = 'block';
-    results.innerHTML = '';
-    submitBtn.disabled = true;
-    btnText.style.display = 'none';
-    btnLoader.style.display = 'inline';
-
-    try {
-        const response = await fetch('/api/find-answers', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ lesson_id: lessonId })
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            throw new Error(data.error || 'Có lỗi xảy ra');
-        }
-
-        displayResults(data);
-
-    } catch (error) {
-        let errorMessage = error.message;
-        let isTokenError = false;
-
-        // Check if it's a 401 error (token expired)
-        if (error.message.includes('401') || error.message.includes('Unauthorized')) {
-            errorMessage = 'Token đã hết hạn. Vui lòng cập nhật token mới!';
-            isTokenError = true;
-        }
-
-        results.innerHTML = `
-            <div class="question-card" style="border-left-color: #e74c3c;">
-                <p style="color: #e74c3c; font-weight: 600;">Lỗi: ${errorMessage}</p>
-                ${isTokenError ? `
-                    <button onclick="document.getElementById('tokenBtn').click()" 
-                            style="margin-top: 15px; padding: 10px 20px; background: #f39c12; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">
-                        Cập nhật Token ngay
-                    </button>
-                ` : ''}
-                <p style="color: #666; margin-top: 10px;">Vui lòng kiểm tra lại Lesson ID${isTokenError ? ' và token' : ''}.</p>
+function displayVideoResults(data, container) {
+    const { tracking, lesson } = data;
+    const ok = tracking?.completed;
+    container.innerHTML = `
+        <div class="question-card ${ok ? 'success-card' : 'error-card'}">
+            <div class="question-meta" style="color:${ok ? 'var(--green)' : 'var(--red)'}">
+                ${ok ? ' Bypass thành công!' : ' Có vấn đề khi cập nhật'}
             </div>
-        `;
-    } finally {
-        loading.style.display = 'none';
-        submitBtn.disabled = false;
-        btnText.style.display = 'inline';
-        btnLoader.style.display = 'none';
-    }
-});
+            <table class="info-table">
+                <tr><td>Bài học</td><td>${lesson?.lesson_name || 'N/A'}</td></tr>
+                <tr><td>Lesson ID</td><td>${lesson?.lesson_id || 'N/A'}</td></tr>
+                <tr><td>Tracking ID</td><td>${tracking?.id || 'N/A'}</td></tr>
+                <tr><td>Video Duration</td><td>${tracking?.video_duration || 0}s</td></tr>
+                <tr><td>Time Played</td><td>${tracking?.time_play_video || 0}s</td></tr>
+                <tr><td>Completed</td><td style="color:${ok ? 'var(--green)' : 'var(--red)'}; font-weight:700">
+                    ${ok ? 'Đã hoàn thành ' : 'Chưa hoàn thành '}
+                </td></tr>
+            </table>
+        </div>`;
+}
 
-function displayResults(data) {
-    const { questions, correctAnswers } = data;
+// ===== HELPERS =====
+function setLoading(btn, loadingEl, resultsEl, on) {
+    const text = btn.querySelector('.btn-text');
+    const loader = btn.querySelector('.btn-loader');
+    btn.disabled = on;
+    if (text) text.style.display = on ? 'none' : 'inline';
+    if (loader) loader.style.display = on ? 'inline' : 'none';
+    loadingEl.style.display = on ? 'block' : 'none';
+    if (on) resultsEl.innerHTML = '';
+}
 
-    if (!questions || questions.length === 0) {
-        results.innerHTML = `
-            <div class="question-card">
-                <p>Không tìm thấy câu hỏi nào cho Lesson ID này.</p>
-            </div>
-        `;
-        return;
-    }
-
-    let html = `<h2 style="margin-bottom: 20px; color: #333;">📝 Tìm thấy ${questions.length} câu hỏi</h2>`;
-
-    questions.forEach(question => {
-        const questionText = stripHtml(question.question_direction);
-        const correctAnswer = correctAnswers[question.id];
-
-        html += `
-            <div class="question-card">
-                <div class="question-header">
-                    Câu ${question.question_number} (ID: ${question.id})
-                </div>
-                <div class="question-text">
-                    ${questionText}
-                </div>
-                <div class="answers">
-        `;
-
-        if (question.answer_option && Array.isArray(question.answer_option)) {
-            question.answer_option.forEach(option => {
-                const optionText = stripHtml(option.value);
-                const isCorrect = correctAnswer === option.id;
-                const correctClass = isCorrect ? 'correct' : '';
-
-                html += `
-                    <div class="answer-option ${correctClass}">
-                        ${option.id}. ${optionText}
-                    </div>
-                `;
-            });
-        }
-
-        html += `
-                </div>
-            </div>
-        `;
-    });
-
-    results.innerHTML = html;
+function showError(container, message) {
+    const isToken = message.includes('401') || message.toLowerCase().includes('unauthorized');
+    container.innerHTML = `
+        <div class="question-card error-card">
+            <div class="question-meta" style="color:var(--red)"> Lỗi</div>
+            <p style="color:var(--text-sub);margin-bottom:12px;">${isToken ? 'Token đã hết hạn. Vui lòng cập nhật token mới!' : message}</p>
+            ${isToken ? `<button onclick="document.getElementById('tokenBtn').click()" class="btn-primary" style="width:auto;padding:10px 20px;font-size:0.9rem;"> Cập nhật Token</button>` : ''}
+        </div>`;
 }
 
 function stripHtml(html) {
+    if (!html) return '';
     const tmp = document.createElement('div');
     tmp.innerHTML = html;
     return tmp.textContent || tmp.innerText || '';
 }
 
-// Video Bypass Handler
-videoForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const trackingId = document.getElementById('trackingId').value.trim();
-    const videoDuration = document.getElementById('videoDuration').value.trim();
-
-    if (!trackingId) {
-        alert('Vui lòng nhập Tracking ID');
-        return;
-    }
-
-    // Show loading state
-    videoLoading.style.display = 'block';
-    videoResults.innerHTML = '';
-    videoSubmitBtn.disabled = true;
-    videoBtnText.style.display = 'none';
-    videoBtnLoader.style.display = 'inline';
-
-    try {
-        const response = await fetch('/api/bypass-video', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ 
-                tracking_id: trackingId,
-                video_duration: videoDuration || null
-            })
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            throw new Error(data.error || 'Có lỗi xảy ra');
-        }
-
-        displayVideoResults(data);
-
-    } catch (error) {
-        let errorMessage = error.message;
-        let isTokenError = false;
-
-        // Check if it's a 401 error (token expired)
-        if (error.message.includes('401') || error.message.includes('Unauthorized')) {
-            errorMessage = 'Token đã hết hạn. Vui lòng cập nhật token mới!';
-            isTokenError = true;
-        }
-
-        videoResults.innerHTML = `
-            <div class="question-card" style="border-left-color: #e74c3c;">
-                <p style="color: #e74c3c; font-weight: 600;">Lỗi: ${errorMessage}</p>
-                ${isTokenError ? `
-                    <button onclick="document.getElementById('tokenBtn').click()" 
-                            style="margin-top: 15px; padding: 10px 20px; background: #f39c12; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">
-                        Cập nhật Token ngay
-                    </button>
-                ` : ''}
-                <p style="color: #666; margin-top: 10px;">Vui lòng kiểm tra lại Tracking ID${isTokenError ? ' và token' : ''}.</p>
-            </div>
-        `;
-    } finally {
-        videoLoading.style.display = 'none';
-        videoSubmitBtn.disabled = false;
-        videoBtnText.style.display = 'inline';
-        videoBtnLoader.style.display = 'none';
-    }
-});
-
-function displayVideoResults(data) {
-    const { tracking, lesson } = data;
-
-    let html = `
-        <div class="question-card" style="border-left-color: #28a745;">
-            <h3 style="color: #28a745; margin-bottom: 15px;">Bypass thành công!</h3>
-            
-            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
-                <strong>Bài học:</strong> ${lesson?.lesson_name || 'N/A'}<br>
-                <strong>Lesson ID:</strong> ${lesson?.lesson_id || 'N/A'}<br>
-                <strong>Tracking ID:</strong> ${tracking?.id || 'N/A'}<br>
-                <strong>Video Duration:</strong> ${tracking?.video_duration || 0}s<br>
-                <strong>Time Played:</strong> ${tracking?.time_play_video || 0}s<br>
-                <strong>Last Stopped:</strong> ${tracking?.last_stopped || 0}s<br>
-                <strong>Max Stopped:</strong> ${tracking?.max_stopped_time || 0}s<br>
-                <strong>Completed:</strong> <span style="color: ${tracking?.completed ? '#28a745' : '#e74c3c'}; font-weight: bold;">
-                    ${tracking?.completed ? 'Đã hoàn thành' : 'Chưa hoàn thành'}
-                </span>
-            </div>
-
-            ${tracking?.completed ? `
-                <p style="color: #28a745; font-weight: 600;">
-                    Video đã được đánh dấu hoàn thành thành công!
-                </p>
-            ` : `
-                <p style="color: #e74c3c; font-weight: 600;">
-                    Có vấn đề khi cập nhật. Vui lòng thử lại.
-                </p>
-            `}
-        </div>
-    `;
-
-    videoResults.innerHTML = html;
+// Toast notification
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.textContent = message;
+    Object.assign(toast.style, {
+        position: 'fixed', bottom: '30px', right: '24px', zIndex: '9999',
+        padding: '14px 22px', borderRadius: '12px', fontWeight: '600',
+        fontSize: '0.9rem', maxWidth: '360px', lineHeight: '1.5',
+        background: type === 'success' ? 'rgba(0,200,150,0.15)' : type === 'error' ? 'rgba(255,76,106,0.15)' : 'rgba(108,99,255,0.15)',
+        border: `1px solid ${type === 'success' ? 'var(--green)' : type === 'error' ? 'var(--red)' : 'var(--primary)'}`,
+        color: '#fff', backdropFilter: 'blur(12px)',
+        transition: 'opacity 0.4s ease', opacity: '0',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.4)'
+    });
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => { toast.style.opacity = '1'; });
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 400);
+    }, 3200);
 }

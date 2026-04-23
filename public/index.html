@@ -3,143 +3,157 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tìm Đáp Án - TUEBA Answer Finder</title>
+    <title>TUEBA Helper – LMS Tool</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="modal.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>TUEBA Helper</h1>
-            <p>Công cụ hỗ trợ học tập TUEBA phát triển bởi ICTU</p>
-            <button id="tokenBtn" class="token-btn">Cập nhật Token</button>
-        </header>
-        
-        <!-- Feature Tabs -->
-        <div class="tabs">
-            <button class="tab-btn active" data-tab="answers">Tìm Đáp Án</button>
-            <button class="tab-btn" data-tab="video">Active Video</button>
-        </div>
+    <!-- Background blobs -->
+    <div class="bg-blob blob-1"></div>
+    <div class="bg-blob blob-2"></div>
+    <div class="bg-blob blob-3"></div>
 
-        <!-- Token Update Modal -->
-        <div id="tokenModal" class="modal" style="display: none;">
-            <div class="modal-content">
-                <span class="close">&times;</span>
-                <h2>Cập nhật Token</h2>
-                
-                
-                <!-- Manual Token Update -->
-                <div class="option-section">
-                    <h3>Hướng dẫn lấy token:</h3>
-                    <ol style="color: #666; font-size: 13px; margin: 10px 0; padding-left: 20px; line-height: 1.8;">
-                        <li>Mở <strong>https://lms.tueba.edu.vn/</strong> và đăng nhập</li>
-                        <li>Nhấn <strong>F12</strong> để mở Developer Tools</li>
-                        <li>Chọn tab <strong>Network</strong></li>
-                        <li>Refresh trang hoặc thực hiện một hành động</li>
-                        <li>Tìm request đến <strong>quantri.tueba.edu.vn</strong></li>
-                        <li>Trong Headers, tìm <strong>Authorization</strong></li>
-                        <li>Copy phần sau "Bearer " và paste vào đây</li>
-                    </ol>
-                    <form id="updateTokenForm">
-                        <div class="form-group">
-                            <label for="tokenInput">Token:</label>
-                            <textarea 
-                                id="tokenInput" 
-                                placeholder="Dán token vào đây (không cần 'Bearer ')" 
-                                rows="4"
-                                required
-                            ></textarea>
-                        </div>
-                        <button type="submit" class="btn-update">Cập nhật Token</button>
-                    </form>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="logo-wrap">
+                <div>
+                    <h1>TUEBA Helper</h1>
+                    <p>Công cụ hỗ trợ học tập · ICTU</p>
                 </div>
+            </div>
+            <button id="tokenBtn" class="token-btn">
+                Cập nhật Token
+            </button>
+        </header>
+
+        <!-- Tabs -->
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="answers">
+                Tìm Đáp Án
+            </button>
+            <button class="tab-btn" data-tab="course">
+                Câu Hỏi Môn Học
+            </button>
+            <button class="tab-btn" data-tab="video">
+                Active Video
+            </button>
+        </nav>
+
+        <!-- Token Modal -->
+        <div id="tokenModal" class="modal" style="display:none;">
+            <div class="modal-content">
+                <button class="modal-close" id="modalCloseBtn">✕</button>
+                <h2> Cập nhật Token</h2>
+                <ol class="guide-list">
+                    <li>Mở <strong>https://lms.tueba.edu.vn/</strong> và đăng nhập</li>
+                    <li>Nhấn <strong>F12</strong> → tab <strong>Network</strong></li>
+                    <li>Refresh trang hoặc thực hiện một hành động</li>
+                    <li>Tìm request đến <strong>quantri.tueba.edu.vn</strong></li>
+                    <li>Trong Headers → tìm <strong>Authorization</strong></li>
+                    <li>Copy phần sau <em>"Bearer "</em> và paste vào đây</li>
+                </ol>
+                <form id="updateTokenForm">
+                    <label for="tokenInput">Token:</label>
+                    <textarea id="tokenInput" placeholder="Dán token vào đây (không cần 'Bearer ')..." rows="4" required></textarea>
+                    <button type="submit" class="btn-primary full-width"> Cập nhật Token</button>
+                </form>
             </div>
         </div>
 
         <main>
-            <!-- Tab Content: Answers -->
+            <!-- Tab: Find Answers (by lesson_id) -->
             <div class="tab-content active" id="answersTab">
-                <div class="input-section">
+                <div class="card">
+                    <div class="card-header">
+                        <h2> Tìm Đáp Án Bài Kiểm Tra</h2>
+                        <p>Nhập Lesson ID để tìm và hiển thị đáp án đúng</p>
+                    </div>
                     <form id="searchForm">
                         <div class="form-group">
-                            <label for="lessonId">Nhập Lesson ID:</label>
-                            <input 
-                                type="text" 
-                                id="lessonId" 
-                                name="lessonId" 
-                                placeholder="Ví dụ: 2988" 
-                                required
-                            >
+                            <label for="lessonId">Lesson ID</label>
+                            <input type="text" id="lessonId" name="lessonId" placeholder="Ví dụ: 2988" required>
                         </div>
-                        <button type="submit" id="submitBtn">
-                            <span class="btn-text">Tìm Đáp Án</span>
-                            <span class="btn-loader" style="display: none;">Đang tìm...</span>
+                        <button type="submit" id="submitBtn" class="btn-primary full-width">
+                            <span class="btn-text"> Tìm Đáp Án</span>
+                            <span class="btn-loader" style="display:none;"> Đang tìm...</span>
                         </button>
                     </form>
                 </div>
 
-                <div id="loading" class="loading" style="display: none;">
+                <div id="loading" class="loading-wrap" style="display:none;">
                     <div class="spinner"></div>
-                    <p>Đang tìm kiếm đáp án...</p>
+                    <p>Đang tìm kiếm đáp án, vui lòng chờ...</p>
                 </div>
-
-                <div id="results" class="results"></div>
+                <div id="results"></div>
             </div>
 
-            <!-- Tab Content: Video Bypass -->
-            <div class="tab-content" id="videoTab">
-                <div class="input-section">
-                    <div class="warning-box">
-                        <strong>Cảnh báo:</strong> Sử dụng tính năng này có thể vi phạm quy định của trường. 
-                        Chỉ dùng khi thực sự cần thiết!
+            <!-- Tab: Course Questions (by class_id) -->
+            <div class="tab-content" id="courseTab">
+                <div class="card">
+                    <div class="card-header">
+                        <h2> Lấy Câu Hỏi Toàn Môn</h2>
+                        <p>Nhập Class ID để tổng hợp tất cả câu hỏi của môn học</p>
                     </div>
-                    
-                    <form id="videoForm">
+                    <form id="courseForm">
                         <div class="form-group">
-                            <label for="trackingId">Nhập Tracking ID:</label>
-                            <input 
-                                type="text" 
-                                id="trackingId" 
-                                name="trackingId" 
-                                placeholder="Ví dụ: 2420501" 
-                                required
-                            >
-                            <small style="color: #666; display: block; margin-top: 5px;">
-                                Lấy từ URL hoặc Network tab: class-student-tracking/{id}
-                            </small>
+                            <label for="classId">Class ID</label>
+                            <input type="text" id="classId" name="classId" placeholder="Ví dụ: 2843" required>
+                            <small>Lấy từ URL trang môn học trên LMS</small>
                         </div>
-                        
-                        <div class="form-group optional" style="display: none;">
-                            <label for="videoDuration">Thời lượng video (giây):</label>
-                            <input 
-                                type="number" 
-                                id="videoDuration" 
-                                name="videoDuration" 
-                                placeholder="Ví dụ: 954"
-                            >
-                            <small style="color: #666; display: block; margin-top: 5px;">
-                                Để trống nếu muốn tự động lấy từ hệ thống
-                            </small>
-                        </div>
-                        
-                        <button type="submit" id="videoSubmitBtn" class="btn-video">
-                            <span class="btn-text">Active</span>
-                            <span class="btn-loader" style="display: none;">Đang xử lý...</span>
+                        <button type="submit" id="courseSubmitBtn" class="btn-primary full-width">
+                            <span class="btn-text"> Lấy Câu Hỏi</span>
+                            <span class="btn-loader" style="display:none;"> Đang tải...</span>
                         </button>
                     </form>
                 </div>
 
-                <div id="videoLoading" class="loading" style="display: none;">
+                <div id="courseLoading" class="loading-wrap" style="display:none;">
                     <div class="spinner"></div>
-                    <p>Đang xử lý bypass video...</p>
+                    <p id="courseLoadingMsg">Đang lấy dữ liệu môn học...</p>
                 </div>
 
-                <div id="videoResults" class="results"></div>
+                <div id="courseResults"></div>
+            </div>
+
+            <!-- Tab: Video Bypass -->
+            <div class="tab-content" id="videoTab">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>️ Active Video</h2>
+                        <p>Đánh dấu video đã xem hoàn thành</p>
+                    </div>
+                    <div class="alert-warning">
+                        ️ <strong>Cảnh báo:</strong> Sử dụng tính năng này có thể vi phạm quy định của trường. Chỉ dùng khi thực sự cần thiết!
+                    </div>
+                    <form id="videoForm">
+                        <div class="form-group">
+                            <label for="trackingId">Tracking ID</label>
+                            <input type="text" id="trackingId" name="trackingId" placeholder="Ví dụ: 2420501" required>
+                            <small>Lấy từ URL hoặc Network tab: class-student-tracking/{id}</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="videoDuration">Thời lượng video (giây) <em style="font-weight:400;opacity:.6;">– tuỳ chọn</em></label>
+                            <input type="number" id="videoDuration" name="videoDuration" placeholder="Để trống để tự lấy từ hệ thống">
+                        </div>
+                        <button type="submit" id="videoSubmitBtn" class="btn-primary btn-orange full-width">
+                            <span class="btn-text">️ Active</span>
+                            <span class="btn-loader" style="display:none;"> Đang xử lý...</span>
+                        </button>
+                    </form>
+                </div>
+
+                <div id="videoLoading" class="loading-wrap" style="display:none;">
+                    <div class="spinner spinner-orange"></div>
+                    <p>Đang xử lý bypass video...</p>
+                </div>
+                <div id="videoResults"></div>
             </div>
         </main>
 
         <footer>
-            <p>Made with ❤️ for TUEBA Students</p>
+            <p>Made with ️ for TUEBA Students · ICTU</p>
         </footer>
     </div>
 
