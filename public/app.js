@@ -49,6 +49,72 @@ document.getElementById('updateTokenForm').addEventListener('submit', async e =>
     }
 });
 
+// ===== AUTO LOGIN =====
+// Toggle password visibility
+document.getElementById('togglePassword').addEventListener('click', function() {
+    const pwInput = document.getElementById('loginPassword');
+    if (pwInput.type === 'password') {
+        pwInput.type = 'text';
+        this.textContent = '🙈';
+    } else {
+        pwInput.type = 'password';
+        this.textContent = '👁️';
+    }
+});
+
+document.getElementById('autoLoginForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const username = document.getElementById('loginUsername').value.trim();
+    const password = document.getElementById('loginPassword').value.trim();
+    if (!username || !password) return;
+
+    const btn = document.getElementById('autoLoginBtn');
+    const btnText = btn.querySelector('.btn-text');
+    const btnLoader = btn.querySelector('.btn-loader');
+    const msgEl = document.getElementById('autoLoginMsg');
+    const orig = btnText.textContent;
+    btn.disabled = true;
+    btnText.style.display = 'none';
+    btnLoader.style.display = 'inline';
+    msgEl.style.display = 'none';
+
+    try {
+        const res = await fetch('/api/auto-login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            msgEl.style.display = 'block';
+            msgEl.style.background = 'rgba(0,200,150,0.1)';
+            msgEl.style.border = '1px solid rgba(0,200,150,0.3)';
+            msgEl.style.color = 'var(--green)';
+            msgEl.innerHTML = '✅ ' + data.message;
+            showToast(' Đăng nhập tự động thành công!', 'success');
+            e.target.reset();
+            document.getElementById('togglePassword').textContent = '👁️';
+            setTimeout(() => { tokenModal.style.display = 'none'; msgEl.style.display = 'none'; }, 2000);
+        } else {
+            msgEl.style.display = 'block';
+            msgEl.style.background = 'rgba(255,76,106,0.08)';
+            msgEl.style.border = '1px solid rgba(255,76,106,0.25)';
+            msgEl.style.color = 'var(--red)';
+            msgEl.textContent = '❌ ' + (data.error || 'Đăng nhập thất bại');
+        }
+    } catch (err) {
+        msgEl.style.display = 'block';
+        msgEl.style.background = 'rgba(255,76,106,0.08)';
+        msgEl.style.border = '1px solid rgba(255,76,106,0.25)';
+        msgEl.style.color = 'var(--red)';
+        msgEl.textContent = '❌ Lỗi: ' + err.message;
+    } finally {
+        btn.disabled = false;
+        btnText.style.display = 'inline';
+        btnLoader.style.display = 'none';
+    }
+});
+
 // ===== FIND ANSWERS (lesson_id) =====
 const searchForm = document.getElementById('searchForm');
 const loading = document.getElementById('loading');
@@ -408,6 +474,77 @@ function displayVideoResults(data, container) {
                 </td></tr>
             </table>
         </div>`;
+}
+
+// ===== AUTO BYPASS ALL VIDEOS =====
+const autoBypassForm = document.getElementById('autoBypassForm');
+const autoBypassLoading = document.getElementById('autoBypassLoading');
+const autoBypassResults = document.getElementById('autoBypassResults');
+const autoBypassBtn = document.getElementById('autoBypassBtn');
+const autoBypassMsg = document.getElementById('autoBypassMsg');
+
+autoBypassForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const classId = document.getElementById('autoClassId').value.trim();
+    if (!classId) return showToast('Vui lòng nhập Class ID', 'error');
+
+    setLoading(autoBypassBtn, autoBypassLoading, autoBypassResults, true);
+    autoBypassMsg.textContent = 'Đang lấy danh sách video...';
+
+    try {
+        const res = await fetch('/api/auto-bypass', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ class_id: classId })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+        displayAutoBypassResults(data, autoBypassResults);
+    } catch (err) {
+        showError(autoBypassResults, err.message);
+    } finally {
+        setLoading(autoBypassBtn, autoBypassLoading, autoBypassResults, false);
+    }
+});
+
+function displayAutoBypassResults(data, container) {
+    const { total_videos, bypassed, failed, results, message } = data;
+
+    if (message) {
+        container.innerHTML = `
+            <div class="question-card success-card">
+                <div class="question-meta" style="color:var(--green)"> Hoàn tất</div>
+                <p style="color:var(--text-sub)">${message}</p>
+            </div>`;
+        return;
+    }
+
+    let html = `
+        <div class="summary-bar">
+            <h3> Kết quả Auto Bypass</h3>
+            <span class="badge badge-blue"> ${total_videos} video</span>
+            <span class="badge badge-green"> ${bypassed} thành công</span>
+            ${failed > 0 ? `<span class="badge" style="background:rgba(255,76,106,0.2);color:var(--red)"> ${failed} thất bại</span>` : ''}
+        </div>`;
+
+    (results || []).forEach(r => {
+        const ok = r.status === 'success';
+        html += `
+        <div class="question-card ${ok ? 'success-card' : 'error-card'}">
+            <div class="question-meta" style="color:${ok ? 'var(--green)' : 'var(--red)'}">
+                ${ok ? ' Đã bypass' : ' Lỗi'}
+            </div>
+            <table class="info-table">
+                <tr><td>Bài học</td><td>${r.lesson_name || 'N/A'}</td></tr>
+                <tr><td>Tracking ID</td><td>${r.tracking_id}</td></tr>
+                <tr><td>Trạng thái</td><td style="color:${ok ? 'var(--green)' : 'var(--red)'}; font-weight:700">
+                    ${ok ? `Thành công (${r.duration}s)` : r.error || 'Lỗi không xác định'}
+                </td></tr>
+            </table>
+        </div>`;
+    });
+
+    container.innerHTML = html;
 }
 
 // ===== HELPERS =====

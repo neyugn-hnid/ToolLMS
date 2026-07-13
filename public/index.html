@@ -6,7 +6,7 @@
     <title>TUEBA Helper – LMS Tool</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
     <!-- Background blobs -->
@@ -46,6 +46,38 @@
             <div class="modal-content">
                 <button class="modal-close" id="modalCloseBtn">✕</button>
                 <h2> Cập nhật Token</h2>
+
+                <!-- Auto Login -->
+                <div class="auto-login-box">
+                    <div class="auto-login-header">
+                        <span class="auto-login-icon"></span>
+                        <span>Đăng nhập tự động</span>
+                    </div>
+                    <p class="auto-login-desc">Nhập tài khoản LMS để tự động lấy token</p>
+                    <form id="autoLoginForm">
+                        <div class="form-group" style="margin-bottom:14px;">
+                            <label for="loginUsername">Tên đăng nhập</label>
+                            <input type="text" id="loginUsername" placeholder="Nhập mã sinh viên..." required>
+                        </div>
+                        <div class="form-group" style="margin-bottom:16px; position:relative;">
+                            <label for="loginPassword">Mật khẩu</label>
+                            <div class="password-wrap">
+                                <input type="password" id="loginPassword" placeholder="Nhập mật khẩu..." required>
+                                <button type="button" id="togglePassword" class="toggle-pw" title="Hiện/ẩn mật khẩu">
+                                    👁️
+                                </button>
+                            </div>
+                        </div>
+                        <button type="submit" id="autoLoginBtn" class="btn-primary full-width" style="background:var(--green);box-shadow:0 4px 16px var(--green-glow);">
+                            <span class="btn-text"> Đăng nhập & Lấy Token</span>
+                            <span class="btn-loader" style="display:none;"> Đang đăng nhập...</span>
+                        </button>
+                    </form>
+                    <div id="autoLoginMsg" class="auto-login-msg" style="display:none;"></div>
+                </div>
+
+                <div style="text-align:center;color:var(--text-muted);margin:10px 0;font-size:0.85rem;">— hoặc dán token thủ công —</div>
+
                 <ol class="guide-list">
                     <li>Mở <strong>https://lms.tueba.edu.vn/</strong> và đăng nhập</li>
                     <li>Nhấn <strong>F12</strong> → tab <strong>Network</strong></li>
@@ -149,6 +181,34 @@
                     <p>Đang xử lý bypass video...</p>
                 </div>
                 <div id="videoResults"></div>
+
+                <!-- Auto Bypass Section -->
+                <div class="card" style="margin-top:24px;">
+                    <div class="card-header">
+                        <h2> Auto Bypass Toàn Bộ Video</h2>
+                        <p>Nhập Class ID để tự động bypass tất cả video trong môn học</p>
+                    </div>
+                    <div class="alert-warning">
+                        ️ Tool sẽ tự động đánh dấu <strong>tất cả video</strong> trong môn là đã xem. Hãy kiểm tra kỹ trước khi dùng!
+                    </div>
+                    <form id="autoBypassForm">
+                        <div class="form-group">
+                            <label for="autoClassId">Class ID</label>
+                            <input type="text" id="autoClassId" name="autoClassId" placeholder="Ví dụ: 2843" required>
+                            <small>Lấy từ URL trang môn học trên LMS</small>
+                        </div>
+                        <button type="submit" id="autoBypassBtn" class="btn-primary btn-orange full-width">
+                            <span class="btn-text"> Auto Bypass Tất Cả</span>
+                            <span class="btn-loader" style="display:none;"> Đang xử lý...</span>
+                        </button>
+                    </form>
+                </div>
+
+                <div id="autoBypassLoading" class="loading-wrap" style="display:none;">
+                    <div class="spinner spinner-orange"></div>
+                    <p id="autoBypassMsg">Đang lấy danh sách video...</p>
+                </div>
+                <div id="autoBypassResults"></div>
             </div>
         </main>
 
@@ -157,6 +217,6 @@
         </footer>
     </div>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=4"></script>
 </body>
 </html>

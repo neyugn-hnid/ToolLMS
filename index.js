@@ -62,6 +62,89 @@ app.post('/api/update-token', (req, res) => {
     res.json({ success: true, message: 'Token updated successfully' });
 });
 
+// Auto-login: lấy token tự động từ username + password
+app.post('/api/auto-login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Username và password là bắt buộc' });
+        }
+
+        const agent = new (require('https').Agent)({ rejectUnauthorized: false });
+
+        console.log(`[auto-login] Đang đăng nhập cho: ${username}`);
+
+        // Gửi request login đến LMS (thử form-encoded)
+        const params = new URLSearchParams();
+        params.append('username', username);
+        params.append('password', password);
+
+        const loginResponse = await axios.post(
+            'https://quantri.tueba.edu.vn:10091/lcms/api/login',
+            params.toString(),
+            {
+                httpsAgent: agent,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Referer': 'https://lms.tueba.edu.vn/',
+                    'Origin': 'https://lms.tueba.edu.vn',
+                    'x-app-id': APP_ID,
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            }
+        );
+
+        const data = loginResponse.data;
+        console.log('[auto-login] Response:', JSON.stringify(data).substring(0, 200));
+
+        // Thử extract token từ response
+        let token = null;
+        if (data.token) {
+            token = data.token;
+        } else if (data.data?.token) {
+            token = data.data.token;
+        } else if (data.access_token) {
+            token = data.access_token;
+        } else if (data.data?.access_token) {
+            token = data.data.access_token;
+        } else if (loginResponse.headers['authorization']) {
+            token = loginResponse.headers['authorization'].replace(/^Bearer\s+/i, '');
+        }
+
+        if (!token) {
+            // Trả về toàn bộ response để debug nếu không tìm thấy token
+            return res.status(400).json({
+                error: 'Không tìm thấy token trong response từ LMS',
+                debug: JSON.stringify(data).substring(0, 500)
+            });
+        }
+
+        // Cập nhật token
+        updateAuthToken(token);
+        console.log(`[auto-login] Token mới đã được cập nhật (${token.substring(0, 20)}...)`);
+
+        res.json({
+            success: true,
+            message: 'Đăng nhập thành công, token đã được cập nhật!',
+            token_preview: token.substring(0, 30) + '...'
+        });
+
+    } catch (error) {
+        console.error('[auto-login] Lỗi:', error.message);
+        if (error.response) {
+            console.error('Status:', error.response.status);
+            console.error('Data:', JSON.stringify(error.response.data).substring(0, 300));
+            res.status(error.response.status).json({
+                error: 'Đăng nhập thất bại: ' + (error.response.data?.message || error.response.data?.error || 'Sai tài khoản hoặc mật khẩu'),
+                details: error.response.data
+            });
+        } else {
+            res.status(500).json({ error: 'Lỗi kết nối đến LMS: ' + error.message });
+        }
+    }
+});
+
 // Endpoint to bypass video
 app.post('/api/bypass-video', async (req, res) => {
     try {
@@ -478,6 +561,108 @@ app.get('/api/class-questions', async (req, res) => {
             console.error('Status:', error.response.status);
             console.error('Data:', JSON.stringify(error.response.data));
             res.status(error.response.status).json({ error: 'Lỗi khi lấy dữ liệu', details: error.response.data });
+        } else {
+            res.status(500).json({ error: 'Lỗi server', details: error.message });
+        }
+    }
+});
+
+// ===== AUTO BYPASS ALL VIDEOS IN A CLASS =====
+app.post('/api/auto-bypass', async (req, res) => {
+    try {
+        const { class_id } = req.body;
+        if (!class_id) {
+            return res.status(400).json({ error: 'class_id is required' });
+        }
+
+        const agent = new (require('https').Agent)({ rejectUnauthorized: false });
+        const BASE = 'https://quantri.tueba.edu.vn:10091/lcms/api';
+
+        console.log(`[auto-bypass] Bắt đầu auto bypass cho class_id: ${class_id}`);
+
+        // B1: Lấy tất cả tracking records của lớp
+        const trackingUrl = `${BASE}/class-student-tracking/?order=ASC&orderby=id&limit=1000&paged=1` +
+            `&select=id,lesson_id,lesson_name,video_duration,time_play_video,completed,last_stopped,max_stopped_time` +
+            `&condition%5B0%5D%5Bkey%5D=class_id&condition%5B0%5D%5Bvalue%5D=${class_id}&condition%5B0%5D%5Bcompare%5D==`;
+
+        const trackingResponse = await makeAuthenticatedRequest(() =>
+            axios.get(trackingUrl, { httpsAgent: agent, headers: getHeaders() })
+        );
+        const trackingData = trackingResponse.data.data || [];
+        console.log(`[auto-bypass] Tổng tracking records: ${trackingData.length}`);
+
+        // B2: Lọc video chưa hoàn thành (video_duration > 0, completed === 0)
+        const pendingVideos = trackingData.filter(t => t.video_duration > 0 && t.completed === 0);
+        console.log(`[auto-bypass] Video cần bypass: ${pendingVideos.length}`);
+
+        if (pendingVideos.length === 0) {
+            return res.json({
+                success: true,
+                message: 'Tất cả video đã hoàn thành, không có gì để bypass!',
+                total_videos: trackingData.filter(t => t.video_duration > 0).length,
+                bypassed: 0,
+                results: []
+            });
+        }
+
+        // B3: Bypass từng video
+        const results = [];
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const video of pendingVideos) {
+            try {
+                const duration = video.video_duration;
+                const updatePayload = {
+                    time_play_video: duration,
+                    video_duration: duration,
+                    max_stopped_time: duration,
+                    last_stopped: duration,
+                    completed: 1
+                };
+
+                await makeAuthenticatedRequest(() =>
+                    axios.put(`${BASE}/class-student-tracking/${video.id}`, updatePayload, {
+                        httpsAgent: agent,
+                        headers: getHeaders()
+                    })
+                );
+
+                successCount++;
+                results.push({
+                    tracking_id: video.id,
+                    lesson_name: video.lesson_name,
+                    lesson_id: video.lesson_id,
+                    status: 'success',
+                    duration: duration
+                });
+                console.log(`  [auto-bypass]  ${video.lesson_name} (${video.id})`);
+            } catch (err) {
+                failCount++;
+                results.push({
+                    tracking_id: video.id,
+                    lesson_name: video.lesson_name,
+                    lesson_id: video.lesson_id,
+                    status: 'failed',
+                    error: err.response?.data || err.message
+                });
+                console.error(`  [auto-bypass]  ${video.lesson_name} (${video.id}): ${err.message}`);
+            }
+        }
+
+        console.log(`[auto-bypass] Done: ${successCount} ok, ${failCount} fail`);
+        res.json({
+            success: true,
+            total_videos: trackingData.filter(t => t.video_duration > 0).length,
+            bypassed: successCount,
+            failed: failCount,
+            results
+        });
+
+    } catch (error) {
+        console.error('[auto-bypass] Lỗi:', error.message);
+        if (error.response) {
+            res.status(error.response.status).json({ error: 'Lỗi khi bypass', details: error.response.data });
         } else {
             res.status(500).json({ error: 'Lỗi server', details: error.message });
         }

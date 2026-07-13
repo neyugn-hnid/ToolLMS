@@ -206,6 +206,7 @@ label {
 
 input[type="text"],
 input[type="number"],
+input[type="password"],
 textarea {
     width: 100%;
     padding: 13px 16px;
@@ -383,6 +384,67 @@ textarea { resize: vertical; min-height: 100px; }
 .info-table td { padding: 8px 12px; font-size: 0.9rem; border-bottom: 1px solid var(--border); }
 .info-table td:first-child { color: var(--text-muted); font-weight: 600; width: 45%; }
 .info-table td:last-child { color: var(--text); }
+
+/* ===== AUTO LOGIN BOX ===== */
+.auto-login-box {
+    background: rgba(0, 200, 150, 0.06);
+    border: 1px solid rgba(0, 200, 150, 0.2);
+    border-radius: var(--radius-sm);
+    padding: 22px;
+    margin-bottom: 24px;
+}
+.auto-login-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--green);
+    margin-bottom: 4px;
+}
+.auto-login-icon { font-size: 1.1rem; }
+.auto-login-desc {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    margin-bottom: 18px;
+}
+
+/* Password toggle */
+.password-wrap {
+    position: relative;
+}
+.password-wrap input {
+    width: 100%;
+    padding-right: 44px !important;
+}
+.toggle-pw {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 8px 10px;
+    border-radius: 6px;
+    transition: all 0.2s;
+    line-height: 1;
+}
+.toggle-pw:hover {
+    color: var(--text);
+    background: rgba(255,255,255,0.06);
+}
+
+.auto-login-msg {
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 0.84rem;
+    line-height: 1.5;
+    white-space: pre-line;
+}
 
 /* ===== MODAL ===== */
 .modal {
