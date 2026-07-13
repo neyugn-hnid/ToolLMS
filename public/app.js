@@ -105,16 +105,19 @@ function displayAnswers(data, container) {
 
     validQs.forEach((q, i) => {
         const num = i + 1;
-        const correctAnswer = correctAnswers[q.id];
+        const correctAnswer = correctAnswers ? String(correctAnswers[q.id] || '') : '';
+        const correctLabel = ANSWER_LABELS[correctAnswer] || correctAnswer || 'Chưa có';
         html += `
-        <div class="question-card">
+        <div class="question-card ${correctAnswer ? 'success-card' : ''}">
             <div class="question-meta">Câu ${num}</div>
+            ${correctAnswer ? `<div class="badge badge-green" style="margin-bottom:12px;">Đáp án đúng: ${correctLabel}</div>` : ''}
             <div class="question-text">${stripHtml(q.question_direction)}</div>
             <div class="answers">`;
         if (q.answer_option && Array.isArray(q.answer_option)) {
             q.answer_option.forEach(opt => {
                 const label = ANSWER_LABELS[opt.id] || opt.id;
-                html += `<div class="answer-option">${label}. ${stripHtml(opt.value)}</div>`;
+                const isCorrect = correctAnswer === String(opt.id);
+                html += `<div class="answer-option ${isCorrect ? 'correct' : ''}">${label}. ${stripHtml(opt.value)}</div>`;
             });
         }
         html += `</div></div>`;

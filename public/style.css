@@ -6,8 +6,8 @@
 }
 
 :root {
-    --primary: #6C63FF;
-    --primary-glow: rgba(108, 99, 255, 0.35);
+    --primary: #000;
+    --primary-glow: rgba(0, 0, 0, 0.35);
     --orange: #FF7043;
     --orange-glow: rgba(255, 112, 67, 0.35);
     --green: #00C896;
@@ -15,11 +15,12 @@
     --red: #FF4C6A;
     --red-glow: rgba(255, 76, 106, 0.3);
 
-    --bg: #0D0F1A;
+    --bg: #000000;
+    --grid-color: rgba(255, 255, 255, 0.04);
     --surface: rgba(255, 255, 255, 0.05);
     --surface-hover: rgba(255, 255, 255, 0.09);
     --border: rgba(255, 255, 255, 0.08);
-    --border-focus: rgba(108, 99, 255, 0.6);
+    --border-focus: rgba(0, 0, 0, 0.6);
 
     --text: #F0F0FF;
     --text-muted: rgba(240, 240, 255, 0.5);
@@ -34,7 +35,11 @@ html { scroll-behavior: smooth; }
 
 body {
     font-family: 'Inter', sans-serif;
-    background: var(--bg);
+    background-color: var(--bg);
+    background-image:
+        linear-gradient(var(--grid-color) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size: 40px 40px;
     color: var(--text);
     min-height: 100vh;
     padding: 30px 16px 60px;
@@ -50,7 +55,7 @@ body {
     z-index: 0;
     opacity: 0.25;
 }
-.blob-1 { width: 500px; height: 500px; top: -100px; left: -150px; background: #6C63FF; }
+.blob-1 { width: 500px; height: 500px; top: -100px; left: -150px; background: #000; }
 .blob-2 { width: 400px; height: 400px; bottom: 0; right: -100px; background: #FF7043; }
 .blob-3 { width: 300px; height: 300px; top: 40%; left: 50%; background: #00C896; opacity: 0.12; }
 
@@ -82,7 +87,7 @@ header {
 .logo-icon {
     width: 52px;
     height: 52px;
-    background: linear-gradient(135deg, var(--primary), #A78BFA);
+    background: var(--primary);
     border-radius: 14px;
     font-size: 1.6rem;
     display: flex;
@@ -94,10 +99,7 @@ header {
 header h1 {
     font-size: 1.8rem;
     font-weight: 800;
-    background: linear-gradient(135deg, #fff 40%, #A78BFA);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: #fff;
 }
 
 header p {
@@ -218,9 +220,9 @@ textarea {
 }
 input::placeholder, textarea::placeholder { color: var(--text-muted); }
 input:focus, textarea:focus {
-    border-color: var(--primary);
+    border-color: #fff;
     box-shadow: 0 0 0 3px var(--primary-glow);
-    background: rgba(108, 99, 255, 0.06);
+    background: rgba(0, 0, 0, 0.06);
 }
 textarea { resize: vertical; min-height: 100px; }
 
@@ -237,7 +239,7 @@ textarea { resize: vertical; min-height: 100px; }
     font-size: 1rem;
     font-weight: 700;
     font-family: inherit;
-    background: linear-gradient(135deg, var(--primary), #A78BFA);
+    background: var(--primary);
     color: #fff;
     border: none;
     border-radius: var(--radius-sm);
@@ -255,7 +257,7 @@ textarea { resize: vertical; min-height: 100px; }
 .btn-primary:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 
 .btn-primary.btn-orange {
-    background: linear-gradient(135deg, var(--orange), #FFAB76);
+    background: var(--orange);
     box-shadow: 0 4px 20px var(--orange-glow);
 }
 .btn-primary.btn-orange:hover { box-shadow: 0 8px 28px var(--orange-glow); }
@@ -286,7 +288,7 @@ textarea { resize: vertical; min-height: 100px; }
     width: 48px;
     height: 48px;
     margin: 0 auto;
-    border: 3px solid rgba(108, 99, 255, 0.15);
+    border: 3px solid rgba(0, 0, 0, 0.15);
     border-top-color: var(--primary);
     border-radius: 50%;
     animation: spin 0.9s linear infinite;
@@ -314,7 +316,7 @@ textarea { resize: vertical; min-height: 100px; }
     font-size: 0.8rem;
     font-weight: 600;
 }
-.badge-blue { background: rgba(108,99,255,0.2); color: #A78BFA; }
+.badge-blue { background: rgba(0, 0, 0, 0.2); color: #333; }
 .badge-green { background: rgba(0,200,150,0.2); color: var(--green); }
 
 .question-card {
@@ -328,7 +330,7 @@ textarea { resize: vertical; min-height: 100px; }
     animation: slideIn 0.35s ease;
     transition: border-color 0.2s;
 }
-.question-card:hover { border-left-color: #A78BFA; }
+.question-card:hover { border-left-color: #333; }
 .question-card.error-card { border-left-color: var(--red); }
 .question-card.success-card { border-left-color: var(--green); }
 
