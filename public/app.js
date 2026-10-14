@@ -16,7 +16,7 @@ const tokenBtn = document.getElementById('tokenBtn');
 const tokenModal = document.getElementById('tokenModal');
 const modalCloseBtn = document.getElementById('modalCloseBtn');
 
-tokenBtn.addEventListener('click', () => tokenModal.style.display = 'flex');
+tokenBtn.addEventListener('click', () => startOfficialLoginTokenFlow());
 modalCloseBtn.addEventListener('click', () => tokenModal.style.display = 'none');
 window.addEventListener('click', e => { if (e.target === tokenModal) tokenModal.style.display = 'none'; });
 
@@ -62,6 +62,247 @@ document.getElementById('togglePassword').addEventListener('click', function() {
     }
 });
 
+document.getElementById('officialLoginBtn').addEventListener('click', () => startOfficialLoginTokenFlow());
+
+async function startOfficialLoginTokenFlow() {
+    const btn = tokenBtn;
+    const modalBtn = document.getElementById('officialLoginBtn');
+    const btnText = btn.querySelector('.btn-text');
+    const btnLoader = btn.querySelector('.btn-loader');
+    const msgEl = document.getElementById('autoLoginMsg');
+
+    btn.disabled = true;
+    if (modalBtn) modalBtn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = 'Đang chờ đăng nhập...';
+
+    if (btnText && btnLoader) {
+        btnText.style.display = 'none';
+        btnLoader.style.display = 'inline';
+    }
+    if (msgEl && tokenModal.style.display !== 'none') {
+        msgEl.style.display = 'block';
+        msgEl.style.background = 'rgba(255,255,255,0.06)';
+        msgEl.style.border = '1px solid var(--border)';
+        msgEl.style.color = 'var(--text-sub)';
+        msgEl.textContent = 'Đã mở trang LMS chính thức. Hãy đăng nhập trong cửa sổ vừa mở, tool sẽ tự bắt token...';
+    }
+
+    try {
+        const res = await fetch('/api/official-login-token', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.details || data.error || 'Không lấy được token');
+
+        handleCapturedClasses(data.classes || []);
+        if (msgEl && tokenModal.style.display !== 'none') {
+            msgEl.style.background = 'rgba(0,200,150,0.1)';
+            msgEl.style.border = '1px solid rgba(0,200,150,0.3)';
+            msgEl.style.color = 'var(--green)';
+            msgEl.innerHTML = renderOfficialLoginMessage(data);
+        }
+        showToast(` Đã lấy token${data.total_classes ? ` và bắt được ${data.total_classes} môn` : ''}!`, 'success');
+    } catch (err) {
+        if (msgEl && tokenModal.style.display !== 'none') {
+            msgEl.style.background = 'rgba(255,76,106,0.08)';
+            msgEl.style.border = '1px solid rgba(255,76,106,0.25)';
+            msgEl.style.color = 'var(--red)';
+            msgEl.textContent = '❌ ' + err.message;
+        }
+        showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        if (modalBtn) modalBtn.disabled = false;
+        btn.textContent = originalText;
+        if (btnText && btnLoader) {
+            btnText.style.display = 'inline';
+            btnLoader.style.display = 'none';
+        }
+    }
+}
+
+document.addEventListener('click', e => {
+    const btn = e.target.closest('.captured-class-btn');
+    if (!btn) return;
+    const classId = btn.dataset.classId || '';
+    if (!classId) return;
+    fillClassIdEverywhere(classId);
+    showToast(`Đã điền Class ID: ${classId}`, 'success');
+});
+
+document.addEventListener('click', async e => {
+    const btn = e.target.closest('.captured-lessons-btn');
+    if (!btn) return;
+    e.stopPropagation();
+
+    const classId = btn.dataset.classId || '';
+    const classStudentId = btn.dataset.classStudentId || '';
+    if (!classId) return;
+    fillClassIdEverywhere(classId);
+    await loadCapturedClassLessons(classId, classStudentId, btn);
+});
+
+document.addEventListener('click', async e => {
+    const btn = e.target.closest('.captured-questions-btn');
+    if (!btn) return;
+    e.stopPropagation();
+
+    const classId = btn.dataset.classId || '';
+    if (!classId) return;
+    fillClassIdEverywhere(classId);
+    await loadCapturedClassQuestions(classId, btn);
+});
+
+function handleCapturedClasses(classes) {
+    const classList = normalizeCapturedClasses(classes);
+    window._capturedClasses = classList;
+    renderCapturedClassesPanel(classList);
+    if (!classList.length) return;
+    fillClassIdEverywhere(classList[0].class_id);
+}
+
+function renderCapturedClassesPanel(classes) {
+    const panel = document.getElementById('capturedClassesPanel');
+    if (!panel) return;
+
+    const list = normalizeCapturedClasses(classes);
+    panel.style.display = 'block';
+
+    if (!list.length) {
+        panel.innerHTML = `
+            <div class="captured-panel-header">
+                <h3>Môn học đã bắt được</h3>
+                <span class="badge" style="background:rgba(255,76,106,0.14);color:var(--red)">0 môn</span>
+            </div>
+            <p class="captured-panel-empty">Đã lấy token, nhưng chưa thấy response danh sách môn từ LMS.</p>`;
+        return;
+    }
+
+    panel.innerHTML = `
+        <div class="captured-panel-header">
+            <h3>Môn học đã bắt được</h3>
+            <span class="badge badge-green">${list.length} môn</span>
+        </div>
+        <div class="captured-class-grid captured-class-list-main">
+            ${list.map(item => `
+                <div class="captured-class-card">
+                    <button type="button" class="captured-class-main captured-class-btn" data-class-id="${escapeAttribute(item.class_id)}">
+                        <span>${escapeHtml(item.class_name || `Class ${item.class_id}`)}</span>
+                        <strong>Class ID ${escapeHtml(item.class_id)}</strong>
+                    </button>
+                    <div class="captured-card-actions">
+                        <button type="button" class="captured-lessons-btn" data-class-id="${escapeAttribute(item.class_id)}" data-class-student-id="${escapeAttribute(item.class_student_id || '')}">
+                            Lấy bài học
+                        </button>
+                        <button type="button" class="captured-questions-btn" data-class-id="${escapeAttribute(item.class_id)}">
+                            Lấy câu hỏi
+                        </button>
+                    </div>
+                </div>
+            `).join('')}
+        </div>`;
+}
+
+function normalizeCapturedClasses(classes) {
+    if (!Array.isArray(classes)) return [];
+    const classMap = new Map();
+    classes
+        .filter(item => item && item.class_id && Number(item.class_id) > 0)
+        .forEach(item => {
+            const id = String(item.class_id);
+            const existing = classMap.get(id) || {};
+            classMap.set(id, {
+                ...existing,
+                ...item,
+                class_student_id: item.class_student_id || existing.class_student_id || ''
+            });
+        });
+    return Array.from(classMap.values());
+}
+
+function fillClassIdEverywhere(classId) {
+    document.querySelectorAll('.lesson-catalog-input').forEach(input => {
+        input.value = classId;
+    });
+    const courseClassInput = document.getElementById('classId');
+    const autoClassInput = document.getElementById('autoClassId');
+    if (courseClassInput) courseClassInput.value = classId;
+    if (autoClassInput) autoClassInput.value = classId;
+}
+
+async function loadCapturedClassLessons(classId, classStudentId, btn) {
+    const results = document.getElementById('lessonListPanel') || document.getElementById('mainResults');
+    const answerPanel = document.getElementById('answerResultsPanel');
+    if (!results) return;
+
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Đang lấy...';
+    results.innerHTML = `<div class="loading-wrap captured-inline-loading"><div class="spinner"></div><p>Đang lấy danh sách bài học...</p></div>`;
+    if (answerPanel) {
+        answerPanel.innerHTML = `<p class="workspace-empty">Danh sách bài đã đổi. Bấm biểu tượng tìm đáp án ở từng bài để xem kết quả.</p>`;
+    }
+
+    try {
+        const params = new URLSearchParams({ class_id: classId });
+        if (classStudentId) params.set('class_student_id', classStudentId);
+        const res = await fetch(`/api/class-lessons?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+
+        lessonCatalogState.classId = classId;
+        lessonCatalogState.data = data;
+        renderLessonCatalogState();
+        displayLessonCatalog(data, results);
+        results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (err) {
+        showError(results, err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+async function loadCapturedClassQuestions(classId, btn) {
+    const results = document.getElementById('answerResultsPanel') || document.getElementById('mainResults');
+    if (!results) return;
+
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Đang lấy...';
+    results.innerHTML = `<div class="loading-wrap captured-inline-loading"><div class="spinner"></div><p>Đang lấy câu hỏi toàn môn...</p></div>`;
+
+    try {
+        const res = await fetch(`/api/class-questions?class_id=${encodeURIComponent(classId)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+        displayCourseQuestions(data, results);
+        results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (err) {
+        showError(results, err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+function renderOfficialLoginMessage(data) {
+    const classes = Array.isArray(data.classes) ? data.classes : [];
+    if (!classes.length) {
+        return `✅ ${escapeHtml(data.message)}<p class="auto-login-note">Chưa bắt được danh sách môn từ trang LMS.</p>`;
+    }
+
+    return `
+        <div>✅ ${escapeHtml(data.message)}</div>
+        <div class="captured-class-list">
+            ${classes.map(item => `
+                <button type="button" class="captured-class-btn" data-class-id="${escapeAttribute(item.class_id)}">
+                    <span>${escapeHtml(item.class_name || `Class ${item.class_id}`)}</span>
+                    <strong>${escapeHtml(item.class_id)}</strong>
+                </button>
+            `).join('')}
+        </div>`;
+}
+
 document.getElementById('autoLoginForm').addEventListener('submit', async e => {
     e.preventDefault();
     const username = document.getElementById('loginUsername').value.trim();
@@ -90,11 +331,10 @@ document.getElementById('autoLoginForm').addEventListener('submit', async e => {
             msgEl.style.background = 'rgba(0,200,150,0.1)';
             msgEl.style.border = '1px solid rgba(0,200,150,0.3)';
             msgEl.style.color = 'var(--green)';
-            msgEl.innerHTML = '✅ ' + data.message;
+            msgEl.innerHTML = '✅ ' + escapeHtml(data.message);
             showToast(' Đăng nhập tự động thành công!', 'success');
             e.target.reset();
             document.getElementById('togglePassword').textContent = '👁️';
-            setTimeout(() => { tokenModal.style.display = 'none'; msgEl.style.display = 'none'; }, 2000);
         } else {
             msgEl.style.display = 'block';
             msgEl.style.background = 'rgba(255,76,106,0.08)';
@@ -121,31 +361,33 @@ const loading = document.getElementById('loading');
 const results = document.getElementById('results');
 const submitBtn = document.getElementById('submitBtn');
 
-searchForm.addEventListener('submit', async e => {
-    e.preventDefault();
-    const lessonId = document.getElementById('lessonId').value.trim();
-    if (!lessonId) return showToast('Vui lòng nhập Lesson ID', 'error');
+if (searchForm) {
+    searchForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        const lessonId = document.getElementById('lessonId').value.trim();
+        if (!lessonId) return showToast('Vui lòng nhập Lesson ID', 'error');
 
-    setLoading(submitBtn, loading, results, true);
+        setLoading(submitBtn, loading, results, true);
 
-    try {
-        const res = await fetch('/api/find-answers', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lesson_id: lessonId })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
-        displayAnswers(data, results);
-    } catch (err) {
-        showError(results, err.message);
-    } finally {
-        setLoading(submitBtn, loading, results, false);
-    }
-});
+        try {
+            const res = await fetch('/api/find-answers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lesson_id: lessonId })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+            displayAnswers(data, results);
+        } catch (err) {
+            showError(results, err.message);
+        } finally {
+            setLoading(submitBtn, loading, results, false);
+        }
+    });
+}
 
 function displayAnswers(data, container) {
-    const { questions, correctAnswers } = data;
+    const { questions, correctAnswers, lesson_id } = data;
     const validQs = questions ? questions.filter(q => q.question_number) : [];
     if (!validQs.length) {
         container.innerHTML = `<div class="question-card"><p>Không tìm thấy câu hỏi nào cho Lesson ID này.</p></div>`;
@@ -160,7 +402,11 @@ function displayAnswers(data, container) {
             <div style="margin-left:auto; display:flex; gap: 8px;">
                 <button class="btn-primary" style="background:#3b82f6; padding:8px 18px;font-size:0.85rem;"
                     onclick='startPracticeMode(window._lastAnswerData.questions, window._lastAnswerData.correctAnswers, "Luyện tập: Đáp án")'>
-                     Luyện Tập (Azota)
+                     Luyện Tập
+                </button>
+                <button class="btn-primary" style="background:var(--green); padding:8px 18px;font-size:0.85rem;"
+                    id="submitFoundAnswersBtn" onclick="submitFoundAnswers()">
+                     Nộp bài ngay
                 </button>
                 <button class="btn-primary" style="padding:8px 18px;font-size:0.85rem;"
                     onclick="downloadAsWord(window._lastAnswerData.questions, window._lastAnswerData.correctAnswers, 'dap-an.doc')">
@@ -188,7 +434,41 @@ function displayAnswers(data, container) {
         }
         html += `</div></div>`;
     });
+    html += renderCorrectAnswerSummary(validQs, correctAnswers);
     container.innerHTML = html;
+}
+
+async function submitFoundAnswers() {
+    const answerData = window._lastAnswerData;
+    const answers = answerData?.correctAnswers || {};
+    const lessonId = answerData?.lesson_id;
+    const testId = answerData?.questions?.find(question => question.test_id)?.test_id;
+    const answerCount = Object.keys(answers).length;
+
+    if (!lessonId || !testId || !answerCount) {
+        return showToast('Chưa có Lesson ID, Test ID hoặc đáp án để nộp bài', 'error');
+    }
+
+    const confirmed = window.confirm(`Nộp ${answerCount} đáp án của Lesson ID ${lessonId}?`);
+    if (!confirmed) return;
+
+    const submitButton = document.getElementById('submitFoundAnswersBtn');
+    if (submitButton) submitButton.disabled = true;
+
+    try {
+        const res = await fetch('/api/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lesson_id: lessonId, test_id: testId, answers })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Nộp bài thất bại');
+        showToast(`Đã nộp ${answerCount} đáp án thành công!`, 'success');
+    } catch (error) {
+        showToast('Nộp bài thất bại: ' + error.message, 'error');
+    } finally {
+        if (submitButton) submitButton.disabled = false;
+    }
 }
 
 // ===== COURSE QUESTIONS (class_id) =====
@@ -198,24 +478,84 @@ const courseResults = document.getElementById('courseResults');
 const courseSubmitBtn = document.getElementById('courseSubmitBtn');
 const courseLoadingMsg = document.getElementById('courseLoadingMsg');
 
-courseForm.addEventListener('submit', async e => {
-    e.preventDefault();
-    const classId = document.getElementById('classId').value.trim();
-    if (!classId) return showToast('Vui lòng nhập Class ID', 'error');
+const lessonCatalogState = { classId: '', data: null };
+const lessonCatalogForms = document.querySelectorAll('.lesson-catalog-form');
+const lessonCatalogButtons = document.querySelectorAll('.lesson-catalog-btn');
+const lessonCatalogLoadings = document.querySelectorAll('.lesson-catalog-loading');
+const lessonCatalogResultsEls = document.querySelectorAll('.lesson-catalog-results');
 
-    setLoading(courseSubmitBtn, courseLoading, courseResults, true);
-    courseLoadingMsg.textContent = 'Đang lấy thông tin môn học...';
+function syncLessonCatalogInputs(classValue) {
+    document.querySelectorAll('.lesson-catalog-input').forEach(input => {
+        input.value = classValue;
+    });
+}
 
-    try {
-        const res = await fetch(`/api/class-questions?class_id=${encodeURIComponent(classId)}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
-        displayCourseQuestions(data, courseResults);
-    } catch (err) {
-        showError(courseResults, err.message);
-    } finally {
-        setLoading(courseSubmitBtn, courseLoading, courseResults, false);
-    }
+function renderLessonCatalogState() {
+    lessonCatalogResultsEls.forEach(container => {
+        if (!lessonCatalogState.data) {
+            container.innerHTML = '';
+            return;
+        }
+        displayLessonCatalog(lessonCatalogState.data, container);
+    });
+}
+
+if (courseForm) {
+    courseForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        const classId = document.getElementById('classId').value.trim();
+        if (!classId) return showToast('Vui lòng nhập Class ID', 'error');
+
+        setLoading(courseSubmitBtn, courseLoading, courseResults, true);
+        courseLoadingMsg.textContent = 'Đang lấy thông tin môn học...';
+
+        try {
+            const res = await fetch(`/api/class-questions?class_id=${encodeURIComponent(classId)}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+            displayCourseQuestions(data, courseResults);
+        } catch (err) {
+            showError(courseResults, err.message);
+        } finally {
+            setLoading(courseSubmitBtn, courseLoading, courseResults, false);
+        }
+    });
+}
+
+lessonCatalogForms.forEach(form => {
+    form.addEventListener('submit', async e => {
+        e.preventDefault();
+        const classId = form.querySelector('.lesson-catalog-input').value.trim();
+        if (!classId) return showToast('Vui lòng nhập Class ID', 'error');
+
+        lessonCatalogState.classId = classId;
+        syncLessonCatalogInputs(classId);
+
+        const widget = form.closest('.lesson-catalog-widget');
+        const button = form.querySelector('.lesson-catalog-btn');
+        const loading = widget.querySelector('.lesson-catalog-loading');
+        const results = widget.querySelector('.lesson-catalog-results');
+
+        setLoading(button, loading, results, true);
+
+        try {
+            const matchedClass = (window._capturedClasses || []).find(item => String(item.class_id) === String(classId));
+            const params = new URLSearchParams({ class_id: classId });
+            if (matchedClass?.class_student_id) {
+                params.set('class_student_id', matchedClass.class_student_id);
+            }
+            const res = await fetch(`/api/class-lessons?${params.toString()}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+            lessonCatalogState.data = data;
+            renderLessonCatalogState();
+        } catch (err) {
+            lessonCatalogState.data = null;
+            showError(results, err.message);
+        } finally {
+            setLoading(button, loading, results, false);
+        }
+    });
 });
 
 function displayCourseQuestions(data, container) {
@@ -267,10 +607,196 @@ function displayCourseQuestions(data, container) {
         html += `</div></div>`;
     });
 
+    html += renderCorrectAnswerSummary(validQs, correctAnswers);
     container.innerHTML = html;
 }
 
+function renderCorrectAnswerSummary(questions, correctAnswers) {
+    const items = (questions || []).map((q, index) => {
+        const rawAnswer = correctAnswers ? String(correctAnswers[q.id] || '') : '';
+        const label = ANSWER_LABELS[rawAnswer] || rawAnswer || 'Chưa có';
+        const correctOption = (q.answer_option || []).find(option => String(option.id) === rawAnswer);
+        const answerTitle = correctOption ? stripHtml(correctOption.value || '').trim() : '';
+        return `
+            <div class="answer-summary-item">
+                <div>
+                    <span>Câu ${index + 1}</span>
+                    <strong>${escapeHtml(answerTitle || label)}</strong>
+                </div>
+            </div>`;
+    });
 
+    if (!items.length) return '';
+
+    return `
+        <div class="question-card answer-summary-card">
+            <div class="summary-bar">
+                <h3>Đáp án đúng</h3>
+                <span class="badge badge-green">${items.length} câu</span>
+            </div>
+            <div class="answer-summary-grid">
+                ${items.join('')}
+            </div>
+        </div>`;
+}
+
+function displayLessonCatalog(data, container) {
+    const { class_name, total_lessons, lessons = [] } = data;
+
+    if (!lessons.length) {
+        container.innerHTML = `<div class="question-card"><p>Không tìm thấy bài học nào cho môn này.</p></div>`;
+        return;
+    }
+
+    let html = `
+        <div class="summary-bar">
+            <h3> ${class_name || 'Danh sách môn/bài học'}</h3>
+            <span class="badge badge-blue"> ${total_lessons} bài</span>
+        </div>
+        <div class="question-card catalog-card">
+            <div class="catalog-table-wrap">
+            <table class="catalog-table">
+                <colgroup>
+                    <col class="col-index">
+                    <col class="col-title">
+                    <col class="col-id">
+                    <col class="col-lesson-id">
+                </colgroup>
+                <tr>
+                    <th>#</th>
+                    <th>Title</th>
+                    <th>ID</th>
+                    <th>Lesson ID</th>
+                </tr>`;
+
+    lessons.forEach((lesson, index) => {
+        const title = lesson.title || lesson.lesson_name || `Bài ${index + 1}`;
+        const trackingId = lesson.tracking_id || lesson.id || '';
+        const lessonId = lesson.lesson_id || '';
+        const isVideo = Number(lesson.video_duration || 0) > 0 || Boolean(lesson.video_id);
+        html += `
+            <tr>
+                <td>${index + 1}</td>
+                <td>${escapeHtml(stripHtml(title))}</td>
+                <td>
+                    <div class="catalog-cell-action">
+                        <span>${escapeHtml(trackingId || 'N/A')}</span>
+                        ${trackingId ? `<button type="button" class="catalog-action-btn catalog-active-btn" data-id="${escapeAttribute(trackingId)}" title="Active" aria-label="Active">${iconPlay()}</button>` : ''}
+                    </div>
+                </td>
+                <td>
+                    <div class="catalog-cell-action">
+                        <span>${escapeHtml(lessonId || 'N/A')}</span>
+                        ${lessonId && !isVideo ? `<button type="button" class="catalog-action-btn catalog-answer-btn" data-lesson-id="${escapeAttribute(lessonId)}" title="Tìm đáp án" aria-label="Tìm đáp án">${iconSearch()}</button>` : ''}
+                    </div>
+                </td>
+            </tr>`;
+    });
+
+    html += `</table></div></div>`;
+    container.innerHTML = html;
+}
+
+function iconPlay() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>';
+}
+
+function iconSearch() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 18a7.5 7.5 0 1 1 5.3-12.8 7.5 7.5 0 0 1-5.3 12.8z"></path><path d="m16 16 4 4"></path></svg>';
+}
+
+function iconLoader() {
+    return '<span class="catalog-loader" aria-hidden="true"></span>';
+}
+
+document.addEventListener('click', async e => {
+    const activeBtn = e.target.closest('.catalog-active-btn');
+    const answerBtn = e.target.closest('.catalog-answer-btn');
+    if (!activeBtn && !answerBtn) return;
+
+    const btn = activeBtn || answerBtn;
+    const output = findCatalogActionOutput(btn);
+    if (!output) return;
+
+    if (activeBtn) {
+        await runCatalogActive(activeBtn, output);
+        return;
+    }
+
+    await runCatalogFindAnswers(answerBtn, output);
+});
+
+function findCatalogActionOutput(btn) {
+    const answerPanel = document.getElementById('answerResultsPanel');
+    if (answerPanel) return answerPanel;
+
+    const scopedRoot = btn.closest('.lesson-catalog-results, .captured-lessons-results, #capturedActionResults, #mainResults');
+    if (scopedRoot) {
+        const output = scopedRoot.querySelector('.catalog-action-results');
+        if (output) return output;
+    }
+
+    const tableCard = btn.closest('.catalog-card');
+    if (tableCard?.nextElementSibling?.classList.contains('catalog-action-results')) {
+        return tableCard.nextElementSibling;
+    }
+
+    return document.querySelector('.catalog-action-results');
+}
+
+async function runCatalogActive(btn, output) {
+    const trackingId = btn.dataset.id;
+    if (!trackingId) return showToast('Không có ID để active', 'error');
+
+    setCatalogButtonLoading(btn, true, 'Đang active...');
+    output.innerHTML = '';
+
+    try {
+        const res = await fetch('/api/bypass-video', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: trackingId, video_duration: null })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+        displayVideoResults(data, output);
+        showToast('Active video thành công!', 'success');
+    } catch (err) {
+        showError(output, err.message);
+    } finally {
+        setCatalogButtonLoading(btn, false);
+    }
+}
+
+async function runCatalogFindAnswers(btn, output) {
+    const lessonId = btn.dataset.lessonId;
+    if (!lessonId) return showToast('Không có Lesson ID để tìm đáp án', 'error');
+
+    setCatalogButtonLoading(btn, true, 'Đang tìm...');
+    output.innerHTML = '';
+
+    try {
+        const res = await fetch('/api/find-answers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lesson_id: lessonId })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+        displayAnswers(data, output);
+        output.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (err) {
+        showError(output, err.message);
+    } finally {
+        setCatalogButtonLoading(btn, false);
+    }
+}
+
+function setCatalogButtonLoading(btn, on) {
+    if (!btn.dataset.originalHtml) btn.dataset.originalHtml = btn.innerHTML;
+    btn.disabled = on;
+    btn.innerHTML = on ? iconLoader() : btn.dataset.originalHtml;
+}
 
 function downloadAsWord(questions, correctAnswers, filename) {
     const styles = `
@@ -338,6 +864,7 @@ function startPracticeMode(questions, correctAnswers, title) {
 
 function renderPracticeMode(title) {
     const mainContainer = document.querySelector('main');
+    mainContainer.classList.add('practice-active');
     
     // Hide all tabs
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -345,15 +872,24 @@ function renderPracticeMode(title) {
     let html = `
         <div class="practice-container">
             <div class="practice-header">
-                <h2> Luyện Tập: ${title}</h2>
-                <button class="btn-primary btn-outline" onclick="exitPracticeMode()"> Thoát</button>
+                <div>
+                    <span class="practice-eyebrow">CHẾ ĐỘ LUYỆN TẬP</span>
+                    <h2>${escapeHtml(title || 'Bài luyện tập')}</h2>
+                </div>
+                <div class="practice-header-actions">
+                    <span class="practice-progress-chip"><strong id="practiceAnsweredCount">0</strong> / ${practiceState.questions.length} đã làm</span>
+                    <button class="btn-primary btn-outline" onclick="exitPracticeMode()">Thoát</button>
+                </div>
             </div>
             
             <div class="practice-layout">
                 <div class="practice-main">
                     ${practiceState.questions.map((q, i) => `
-                        <div class="question-card" id="q-card-${q.id}">
-                            <div class="question-meta" id="q-meta-${q.id}">Câu ${i + 1}</div>
+                        <div class="question-card practice-question" id="q-card-${q.id}">
+                            <div class="practice-question-head">
+                                <div class="question-meta" id="q-meta-${q.id}">Câu ${i + 1}</div>
+                                <span class="practice-question-status" id="q-status-${q.id}">Chưa làm</span>
+                            </div>
                             <div class="question-text">${stripHtml(q.question_direction)}</div>
                             <div class="answers">
                                 ${(q.answer_option || []).map(opt => `
@@ -368,11 +904,23 @@ function renderPracticeMode(title) {
                 </div>
                 
                 <div class="practice-sidebar">
-                    <h3>Bảng câu hỏi</h3>
+                    <div class="practice-sidebar-heading">
+                        <div>
+                            <span class="practice-eyebrow">TIẾN ĐỘ</span>
+                            <h3>Bảng câu hỏi</h3>
+                        </div>
+                        <strong id="practiceSidebarCount">0/${practiceState.questions.length}</strong>
+                    </div>
+                    <div class="practice-progress-track"><span id="practiceProgressBar"></span></div>
                     <div class="nav-grid">
                         ${practiceState.questions.map((q, i) => `
-                            <a href="#q-card-${q.id}" class="nav-box" id="nav-${q.id}">${i + 1}</a>
+                            <a href="#q-card-${q.id}" class="nav-box" id="nav-${q.id}" title="Câu ${i + 1}">${i + 1}</a>
                         `).join('')}
+                    </div>
+                    <div class="practice-legend">
+                        <span><i class="legend-dot"></i> Chưa làm</span>
+                        <span><i class="legend-dot legend-correct"></i> Đúng</span>
+                        <span><i class="legend-dot legend-wrong"></i> Sai</span>
                     </div>
                 </div>
             </div>
@@ -400,6 +948,14 @@ function selectPracticeAnswer(qId, optId) {
     const correctOpt = practiceState.correctAnswers[qId];
     const userEl = document.getElementById(`opt-${qId}-${optId}`);
     const nav = document.getElementById(`nav-${qId}`);
+    const status = document.getElementById(`q-status-${qId}`);
+    const answeredCount = Object.keys(practiceState.userAnswers).length;
+    const totalQuestions = practiceState.questions.length;
+
+    document.getElementById('practiceAnsweredCount').textContent = answeredCount;
+    document.getElementById('practiceSidebarCount').textContent = `${answeredCount}/${totalQuestions}`;
+    document.getElementById('practiceProgressBar').style.width = `${(answeredCount / totalQuestions) * 100}%`;
+    if (status) status.textContent = optId == correctOpt ? 'Chính xác' : 'Đã trả lời';
     
     if (optId == correctOpt) {
         if (userEl) userEl.classList.add('review-correct');
@@ -415,7 +971,10 @@ function selectPracticeAnswer(qId, optId) {
 }
 
 function exitPracticeMode() {
-    document.getElementById('practiceWrap').style.display = 'none';
+    const practiceWrap = document.getElementById('practiceWrap');
+    const mainContainer = document.querySelector('main');
+    practiceWrap.style.display = 'none';
+    mainContainer.classList.remove('practice-active');
     
     // Show active tab
     const activeTabObj = document.querySelector('.tab-btn.active');
@@ -431,29 +990,31 @@ const videoLoading = document.getElementById('videoLoading');
 const videoResults = document.getElementById('videoResults');
 const videoSubmitBtn = document.getElementById('videoSubmitBtn');
 
-videoForm.addEventListener('submit', async e => {
-    e.preventDefault();
-    const trackingId = document.getElementById('trackingId').value.trim();
-    const videoDuration = document.getElementById('videoDuration').value.trim();
-    if (!trackingId) return showToast('Vui lòng nhập Tracking ID', 'error');
+if (videoForm) {
+    videoForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        const trackingId = document.getElementById('trackingId').value.trim();
+        const videoDuration = document.getElementById('videoDuration').value.trim();
+        if (!trackingId) return showToast('Vui lòng nhập Video ID', 'error');
 
-    setLoading(videoSubmitBtn, videoLoading, videoResults, true);
+        setLoading(videoSubmitBtn, videoLoading, videoResults, true);
 
-    try {
-        const res = await fetch('/api/bypass-video', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tracking_id: trackingId, video_duration: videoDuration || null })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
-        displayVideoResults(data, videoResults);
-    } catch (err) {
-        showError(videoResults, err.message);
-    } finally {
-        setLoading(videoSubmitBtn, videoLoading, videoResults, false);
-    }
-});
+        try {
+            const res = await fetch('/api/bypass-video', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tracking_id: trackingId, video_duration: videoDuration || null })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+            displayVideoResults(data, videoResults);
+        } catch (err) {
+            showError(videoResults, err.message);
+        } finally {
+            setLoading(videoSubmitBtn, videoLoading, videoResults, false);
+        }
+    });
+}
 
 function displayVideoResults(data, container) {
     const { tracking, lesson } = data;
@@ -466,7 +1027,7 @@ function displayVideoResults(data, container) {
             <table class="info-table">
                 <tr><td>Bài học</td><td>${lesson?.lesson_name || 'N/A'}</td></tr>
                 <tr><td>Lesson ID</td><td>${lesson?.lesson_id || 'N/A'}</td></tr>
-                <tr><td>Tracking ID</td><td>${tracking?.id || 'N/A'}</td></tr>
+                <tr><td>Video ID</td><td>${tracking?.id || 'N/A'}</td></tr>
                 <tr><td>Video Duration</td><td>${tracking?.video_duration || 0}s</td></tr>
                 <tr><td>Time Played</td><td>${tracking?.time_play_video || 0}s</td></tr>
                 <tr><td>Completed</td><td style="color:${ok ? 'var(--green)' : 'var(--red)'}; font-weight:700">
@@ -483,29 +1044,31 @@ const autoBypassResults = document.getElementById('autoBypassResults');
 const autoBypassBtn = document.getElementById('autoBypassBtn');
 const autoBypassMsg = document.getElementById('autoBypassMsg');
 
-autoBypassForm.addEventListener('submit', async e => {
-    e.preventDefault();
-    const classId = document.getElementById('autoClassId').value.trim();
-    if (!classId) return showToast('Vui lòng nhập Class ID', 'error');
+if (autoBypassForm) {
+    autoBypassForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        const classId = document.getElementById('autoClassId').value.trim();
+        if (!classId) return showToast('Vui lòng nhập Class ID', 'error');
 
-    setLoading(autoBypassBtn, autoBypassLoading, autoBypassResults, true);
-    autoBypassMsg.textContent = 'Đang lấy danh sách video...';
+        setLoading(autoBypassBtn, autoBypassLoading, autoBypassResults, true);
+        autoBypassMsg.textContent = 'Đang lấy danh sách video...';
 
-    try {
-        const res = await fetch('/api/auto-bypass', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ class_id: classId })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
-        displayAutoBypassResults(data, autoBypassResults);
-    } catch (err) {
-        showError(autoBypassResults, err.message);
-    } finally {
-        setLoading(autoBypassBtn, autoBypassLoading, autoBypassResults, false);
-    }
-});
+        try {
+            const res = await fetch('/api/auto-bypass', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ class_id: classId })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Có lỗi xảy ra');
+            displayAutoBypassResults(data, autoBypassResults);
+        } catch (err) {
+            showError(autoBypassResults, err.message);
+        } finally {
+            setLoading(autoBypassBtn, autoBypassLoading, autoBypassResults, false);
+        }
+    });
+}
 
 function displayAutoBypassResults(data, container) {
     const { total_videos, bypassed, failed, results, message } = data;
@@ -536,7 +1099,7 @@ function displayAutoBypassResults(data, container) {
             </div>
             <table class="info-table">
                 <tr><td>Bài học</td><td>${r.lesson_name || 'N/A'}</td></tr>
-                <tr><td>Tracking ID</td><td>${r.tracking_id}</td></tr>
+                <tr><td>Video ID</td><td>${r.tracking_id}</td></tr>
                 <tr><td>Trạng thái</td><td style="color:${ok ? 'var(--green)' : 'var(--red)'}; font-weight:700">
                     ${ok ? `Thành công (${r.duration}s)` : r.error || 'Lỗi không xác định'}
                 </td></tr>
@@ -563,8 +1126,8 @@ function showError(container, message) {
     container.innerHTML = `
         <div class="question-card error-card">
             <div class="question-meta" style="color:var(--red)"> Lỗi</div>
-            <p style="color:var(--text-sub);margin-bottom:12px;">${isToken ? 'Token đã hết hạn. Vui lòng cập nhật token mới!' : message}</p>
-            ${isToken ? `<button onclick="document.getElementById('tokenBtn').click()" class="btn-primary" style="width:auto;padding:10px 20px;font-size:0.9rem;"> Cập nhật Token</button>` : ''}
+            <p style="color:var(--text-sub);margin-bottom:12px;">${isToken ? 'Token đã hết hạn. Vui lòng đăng nhập lại!' : message}</p>
+            ${isToken ? `<button onclick="document.getElementById('tokenBtn').click()" class="btn-primary" style="width:auto;padding:10px 20px;font-size:0.9rem;">Đăng nhập</button>` : ''}
         </div>`;
 }
 
@@ -573,6 +1136,19 @@ function stripHtml(html) {
     const tmp = document.createElement('div');
     tmp.innerHTML = html;
     return tmp.textContent || tmp.innerText || '';
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function escapeAttribute(value) {
+    return escapeHtml(value);
 }
 
 // Toast notification

@@ -1,6 +1,7 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 const PORT = 3000;
@@ -8,6 +9,7 @@ const PORT = 3000;
 // Token management
 let authToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo1MDIzMjgyLCJpYXQiOjE3NzI2MzQ3NzYsImV4cCI6MTc3MjY2MzU3Nn0.cqqD8BApIVeT6hL7ZI--fvcWxhU_8QxjBfzsHQlfQ74';
 const APP_ID = '08E29F70-C0D2-4EAF-938F-94A31FCEF77A';
+const capturedClassStudentIds = new Map();
 
 // Function to get current token
 function getAuthToken() {
@@ -33,6 +35,302 @@ function getHeaders() {
     };
 }
 
+function extractTokenFromValue(value) {
+    if (!value || typeof value !== 'string') return null;
+    const bearerMatch = value.match(/Bearer\s+([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/i);
+    if (bearerMatch) return bearerMatch[1];
+    const jwtMatch = value.match(/\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/);
+    return jwtMatch ? jwtMatch[0] : null;
+}
+
+function findTokenInObject(value) {
+    const directToken = extractTokenFromValue(typeof value === 'string' ? value : '');
+    if (directToken) return directToken;
+
+    if (!value || typeof value !== 'object') return null;
+    const stack = [value];
+    const preferredKeys = ['token', 'access_token', 'accessToken', 'jwt', 'authorization', 'Authorization'];
+
+    while (stack.length) {
+        const current = stack.pop();
+        if (!current || typeof current !== 'object') continue;
+
+        for (const key of preferredKeys) {
+            const token = extractTokenFromValue(current[key]);
+            if (token) return token;
+        }
+
+        Object.values(current).forEach(item => {
+            if (typeof item === 'string') {
+                const token = extractTokenFromValue(item);
+                if (token) stack.push({ token });
+            } else if (item && typeof item === 'object') {
+                stack.push(item);
+            }
+        });
+    }
+
+    return null;
+}
+
+function collectClassesFromPayload(payload, sourceUrl = '') {
+    const classes = [];
+    const stack = [payload];
+    const sourceLooksLikeClassList = /\/class\/?\?/.test(sourceUrl);
+    const sourceLooksLikeClassStudent = /\/class-student[/?]/.test(sourceUrl) && !/\/class-student-tracking[/?]/.test(sourceUrl);
+
+    while (stack.length) {
+        const current = stack.pop();
+        if (!current || typeof current !== 'object') continue;
+
+        if (Array.isArray(current)) {
+            current.forEach(item => stack.push(item));
+            continue;
+        }
+
+        const rawClassId = current.class_id || (sourceLooksLikeClassList ? current.id : null);
+        const classId = Number(rawClassId);
+        if (classId) {
+            const classStudentId = current.class_student_id || current.classStudentId ||
+                (sourceLooksLikeClassStudent && current.id ? current.id : null);
+            classes.push({
+                class_id: classId,
+                class_student_id: classStudentId,
+                class_name: current.class_name || current.name || current.title || `Class ${classId}`,
+                course_id: current.course_id || null,
+                source: sourceUrl
+            });
+        }
+
+        Object.values(current).forEach(item => {
+            if (item && typeof item === 'object') stack.push(item);
+        });
+    }
+
+    return classes;
+}
+
+function decodeJwtPayload(token) {
+    try {
+        const payload = token.split('.')[1];
+        if (!payload) return null;
+        const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = normalized.padEnd(normalized.length + ((4 - normalized.length % 4) % 4), '=');
+        return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
+    } catch (_) {
+        return null;
+    }
+}
+
+function getCurrentUserId() {
+    const payload = decodeJwtPayload(getAuthToken());
+    return payload?.user_id || payload?.id || payload?.sub || null;
+}
+
+async function resolveClassStudentInfo(BASE, agent, classStudentId) {
+    const trackingUrl = `${BASE}/class-student-tracking/?order=DESC&orderby=id&limit=1&paged=1&select=id,class_student_id,class_id` +
+        `&condition%5B0%5D%5Bkey%5D=class_student_id&condition%5B0%5D%5Bvalue%5D=${classStudentId}&condition%5B0%5D%5Bcompare%5D==`;
+
+    const response = await makeAuthenticatedRequest(() =>
+        axios.get(trackingUrl, { httpsAgent: agent, headers: getHeaders() })
+    );
+
+    const item = (response.data.data || [])[0];
+    if (!item?.class_id) return null;
+
+    capturedClassStudentIds.set(Number(item.class_id), Number(classStudentId));
+    return {
+        class_id: Number(item.class_id),
+        class_student_id: Number(classStudentId)
+    };
+}
+
+async function findClassStudentIdForClass(BASE, agent, classId) {
+    const cached = capturedClassStudentIds.get(Number(classId));
+    if (cached) return cached;
+
+    const userId = getCurrentUserId();
+    const attempts = [];
+
+    if (userId) {
+        attempts.push(`${BASE}/class-student-tracking/?order=DESC&orderby=id&limit=1&paged=1&select=id,class_student_id,class_id,created_by` +
+            `&condition%5B0%5D%5Bkey%5D=class_id&condition%5B0%5D%5Bvalue%5D=${classId}&condition%5B0%5D%5Bcompare%5D==` +
+            `&condition%5B1%5D%5Bkey%5D=created_by&condition%5B1%5D%5Bvalue%5D=${userId}&condition%5B1%5D%5Bcompare%5D==&condition%5B1%5D%5Btype%5D=and`);
+        attempts.push(`${BASE}/class-student/?order=DESC&orderby=id&limit=1&paged=1&select=id,class_id,user_id,student_id,created_by` +
+            `&condition%5B0%5D%5Bkey%5D=class_id&condition%5B0%5D%5Bvalue%5D=${classId}&condition%5B0%5D%5Bcompare%5D==` +
+            `&condition%5B1%5D%5Bkey%5D=user_id&condition%5B1%5D%5Bvalue%5D=${userId}&condition%5B1%5D%5Bcompare%5D==&condition%5B1%5D%5Btype%5D=and`);
+        attempts.push(`${BASE}/class-student/?order=DESC&orderby=id&limit=1&paged=1&select=id,class_id,user_id,student_id,created_by` +
+            `&condition%5B0%5D%5Bkey%5D=class_id&condition%5B0%5D%5Bvalue%5D=${classId}&condition%5B0%5D%5Bcompare%5D==` +
+            `&condition%5B1%5D%5Bkey%5D=created_by&condition%5B1%5D%5Bvalue%5D=${userId}&condition%5B1%5D%5Bcompare%5D==&condition%5B1%5D%5Btype%5D=and`);
+    }
+
+    for (const url of attempts) {
+        try {
+            const response = await makeAuthenticatedRequest(() =>
+                axios.get(url, { httpsAgent: agent, headers: getHeaders() })
+            );
+            const item = (response.data.data || [])[0];
+            const classStudentId = Number(item?.class_student_id || item?.id);
+            if (classStudentId) {
+                capturedClassStudentIds.set(Number(classId), classStudentId);
+                return classStudentId;
+            }
+        } catch (error) {
+            console.warn('[class-lessons] Không dò được class_student_id:', error.response?.status || error.message);
+        }
+    }
+
+    return null;
+}
+
+async function enrichCapturedClasses(classes, agent) {
+    const classMap = new Map();
+
+    classes.forEach(item => {
+        const classId = Number(item?.class_id);
+        if (!classId) return;
+        const existing = classMap.get(classId) || {};
+        classMap.set(classId, {
+            ...existing,
+            ...item,
+            class_id: classId,
+            class_student_id: item.class_student_id || existing.class_student_id || null,
+            class_name: item.class_name || existing.class_name || `Class ${classId}`,
+            course_id: item.course_id || existing.course_id || null
+        });
+    });
+
+    const uniqueClasses = Array.from(classMap.values());
+    const BASE = 'https://quantri.tueba.edu.vn:10091/lcms/api';
+    const enriched = [];
+
+    for (const item of uniqueClasses) {
+        try {
+            const response = await makeAuthenticatedRequest(() =>
+                axios.get(`${BASE}/class/${item.class_id}?with=managers`, {
+                    httpsAgent: agent,
+                    headers: getHeaders()
+                })
+            );
+            const data = response.data.data || response.data || {};
+            enriched.push({
+                ...item,
+                class_name: data.class_name || data.name || data.title || item.class_name || `Class ${item.class_id}`,
+                course_id: data.course_id || item.course_id || null,
+                class_student_id: data.class_student_id || item.class_student_id || null
+            });
+        } catch (error) {
+            enriched.push(item);
+        }
+    }
+
+    return enriched;
+}
+
+async function captureTokenFromOfficialLogin(timeoutMs = 180000) {
+    const puppeteer = require('puppeteer');
+    const agent = new (require('https').Agent)({ rejectUnauthorized: false });
+    const browser = await puppeteer.launch({
+        headless: false,
+        defaultViewport: null,
+        ignoreHTTPSErrors: true,
+        args: ['--start-maximized', '--ignore-certificate-errors']
+    });
+    const page = await browser.newPage();
+    let resolvedToken = null;
+    let tokenResolvedAt = null;
+    const classMap = new Map();
+
+    const rememberClasses = (items = []) => {
+        items.forEach(item => {
+            if (!item?.class_id) return;
+            const classId = Number(item.class_id);
+            const existing = classMap.get(classId) || {};
+            classMap.set(classId, {
+                ...existing,
+                ...item,
+                class_id: classId,
+                class_student_id: item.class_student_id || existing.class_student_id || null,
+                class_name: item.class_name || existing.class_name || `Class ${classId}`,
+                course_id: item.course_id || existing.course_id || null
+            });
+        });
+    };
+
+    const rememberToken = value => {
+        const token = extractTokenFromValue(value);
+        if (token && !resolvedToken) {
+            resolvedToken = token;
+            tokenResolvedAt = Date.now();
+        }
+    };
+
+    page.on('request', request => {
+        const headers = request.headers();
+        rememberToken(headers.authorization || headers.Authorization);
+    });
+
+    page.on('response', async response => {
+        rememberToken(response.headers().authorization || response.headers().Authorization);
+        if (!response.url().includes('quantri.tueba.edu.vn')) return;
+        const contentType = response.headers()['content-type'] || '';
+        if (contentType && !contentType.includes('application/json') && !contentType.includes('text/plain')) return;
+
+        try {
+            const data = await response.json();
+            const token = findTokenInObject(data);
+            if (token && !resolvedToken) resolvedToken = token;
+            rememberClasses(collectClassesFromPayload(data, response.url()));
+        } catch (_) {}
+    });
+
+    page.on('pageerror', error => {
+        console.warn('[official-login-token] LMS page error:', error.message);
+    });
+
+    try {
+        await page.goto('https://lms.tueba.edu.vn/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    } catch (_) {
+        await page.goto('https://lms.tueba.edu.vn/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    }
+
+    const start = Date.now();
+    while ((!resolvedToken || Date.now() - tokenResolvedAt < 15000) && Date.now() - start < timeoutMs) {
+        if (page.isClosed()) break;
+        try {
+            const storageValues = await page.evaluate(() => {
+                const values = [];
+                [localStorage, sessionStorage].forEach(storage => {
+                    for (let i = 0; i < storage.length; i++) {
+                        const key = storage.key(i);
+                        values.push(`${key}=${storage.getItem(key)}`);
+                    }
+                });
+                return values;
+            });
+            for (const value of storageValues) {
+                rememberToken(value);
+                try {
+                    rememberClasses(collectClassesFromPayload(JSON.parse(value), 'storage'));
+                } catch (_) {}
+                if (resolvedToken) break;
+            }
+        } catch (_) {}
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    if (!resolvedToken) {
+        await browser.close().catch(() => {});
+        throw new Error('Không bắt được token sau khi mở trang đăng nhập chính thức');
+    }
+
+    updateAuthToken(resolvedToken);
+    return {
+        token: resolvedToken,
+        classes: await enrichCapturedClasses(Array.from(classMap.values()), agent)
+    };
+}
+
 // Function to make authenticated request with auto-retry on 401
 async function makeAuthenticatedRequest(requestFn, maxRetries = 1) {
     for (let i = 0; i <= maxRetries; i++) {
@@ -50,7 +348,20 @@ async function makeAuthenticatedRequest(requestFn, maxRetries = 1) {
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
+
+function buildClassTrackingUrl(BASE, classId, classStudentId = null, select = 'id,lesson_id,lesson_name,video_duration,test_results,completed', page = 1, limit = 1000) {
+    const baseUrl = `${BASE}/class-student-tracking/?order=ASC&orderby=id&limit=${limit}&paged=${page}&select=${select}`;
+
+    if (!classStudentId) {
+        return `${baseUrl}` +
+            `&condition%5B0%5D%5Bkey%5D=class_id&condition%5B0%5D%5Bvalue%5D=${classId}&condition%5B0%5D%5Bcompare%5D==`;
+    }
+
+    return `${baseUrl}` +
+        `&condition%5B0%5D%5Bkey%5D=class_student_id&condition%5B0%5D%5Bvalue%5D=${classStudentId}&condition%5B0%5D%5Bcompare%5D==` +
+        `&condition%5B1%5D%5Bkey%5D=class_id&condition%5B1%5D%5Bvalue%5D=${classId}&condition%5B1%5D%5Bcompare%5D==&condition%5B1%5D%5Btype%5D=and`;
+}
 
 // Endpoint to manually update token
 app.post('/api/update-token', (req, res) => {
@@ -60,6 +371,32 @@ app.post('/api/update-token', (req, res) => {
     }
     updateAuthToken(token);
     res.json({ success: true, message: 'Token updated successfully' });
+});
+
+app.post('/api/official-login-token', async (req, res) => {
+    try {
+        console.log('[official-login-token] Mở trình duyệt đăng nhập chính thức...');
+        const { token, classes } = await captureTokenFromOfficialLogin();
+        classes.forEach(item => {
+            if (item.class_id && item.class_student_id) {
+                capturedClassStudentIds.set(Number(item.class_id), Number(item.class_student_id));
+            }
+        });
+        console.log(`[official-login-token] Token đã được cập nhật (${token.substring(0, 20)}...)`);
+        res.json({
+            success: true,
+            message: 'Đã lấy token từ trang đăng nhập chính thức và cập nhật vào tool!',
+            token_preview: token.substring(0, 30) + '...',
+            total_classes: classes.length,
+            classes
+        });
+    } catch (error) {
+        console.error('[official-login-token] Lỗi:', error.message);
+        res.status(500).json({
+            error: 'Không lấy được token từ trang đăng nhập chính thức',
+            details: error.message
+        });
+    }
 });
 
 // Auto-login: lấy token tự động từ username + password
@@ -148,17 +485,18 @@ app.post('/api/auto-login', async (req, res) => {
 // Endpoint to bypass video
 app.post('/api/bypass-video', async (req, res) => {
     try {
-        const { tracking_id, video_duration } = req.body;
-        if (!tracking_id) {
-            return res.status(400).json({ error: 'tracking_id is required' });
+        const { id, tracking_id: legacyTrackingId, video_duration } = req.body;
+        const trackingId = id || legacyTrackingId;
+        if (!trackingId) {
+            return res.status(400).json({ error: 'id is required' });
         }
 
-        console.log(`Bypassing video for tracking_id: ${tracking_id}`);
+        console.log(`Bypassing video for id: ${trackingId}`);
         const agent = new (require('https').Agent)({ rejectUnauthorized: false });
 
         // Get current tracking data
         const getResponse = await makeAuthenticatedRequest(async () => {
-            return await axios.get(`https://quantri.tueba.edu.vn:10091/lcms/api/class-student-tracking/${tracking_id}`, {
+            return await axios.get(`https://quantri.tueba.edu.vn:10091/lcms/api/class-student-tracking/${trackingId}`, {
                 httpsAgent: agent,
                 headers: getHeaders()
             });
@@ -181,7 +519,7 @@ app.post('/api/bypass-video', async (req, res) => {
 
         const updateResponse = await makeAuthenticatedRequest(async () => {
             return await axios.put(
-                `https://quantri.tueba.edu.vn:10091/lcms/api/class-student-tracking/${tracking_id}`,
+                `https://quantri.tueba.edu.vn:10091/lcms/api/class-student-tracking/${trackingId}`,
                 updatePayload,
                 {
                     httpsAgent: agent,
@@ -194,7 +532,7 @@ app.post('/api/bypass-video', async (req, res) => {
         
         // Get updated data to confirm
         const finalResponse = await makeAuthenticatedRequest(async () => {
-            return await axios.get(`https://quantri.tueba.edu.vn:10091/lcms/api/class-student-tracking/${tracking_id}`, {
+            return await axios.get(`https://quantri.tueba.edu.vn:10091/lcms/api/class-student-tracking/${trackingId}`, {
                 httpsAgent: agent,
                 headers: getHeaders()
             });
@@ -264,12 +602,17 @@ app.get('/api/questions', async (req, res) => {
 
 app.post('/api/submit', async (req, res) => {
     try {
+        const { lesson_id, test_id, answers } = req.body;
+        if (!lesson_id || !test_id || !answers || typeof answers !== 'object') {
+            return res.status(400).json({ error: 'lesson_id, test_id và answers là bắt buộc' });
+        }
+
         console.log('Submitting data to external API...');
         const agent = new (require('https').Agent)({ rejectUnauthorized: false });
 
         const response = await makeAuthenticatedRequest(async () => {
             return await axios.post('https://quantri.tueba.edu.vn:10091/lcms/api/lesson-test-questions/nopbai', 
-                req.body, 
+                { lesson_id, test_id, answers },
                 {
                     httpsAgent: agent,
                     headers: getHeaders()
@@ -278,7 +621,7 @@ app.post('/api/submit', async (req, res) => {
         });
 
         console.log('Data submitted successfully');
-        res.json(response.data);
+        res.json({ ...response.data, lesson_id, test_id });
     } catch (error) {
         console.error('Error submitting data:', error.message);
         if (error.response) {
@@ -343,6 +686,7 @@ app.post('/api/find-answers', async (req, res) => {
 
         res.json({
             success: true,
+            lesson_id: Number(lesson_id),
             questions: questions,
             correctAnswers: correctAnswers
         });
@@ -427,9 +771,156 @@ app.get('/api/debug-class', async (req, res) => {
     res.json(results);
 });
 
+app.get('/api/resolve-class-student', async (req, res) => {
+    const classStudentId = req.query.class_student_id;
+    if (!classStudentId) {
+        return res.status(400).json({ error: 'class_student_id is required' });
+    }
+
+    try {
+        const agent = new (require('https').Agent)({ rejectUnauthorized: false });
+        const BASE = 'https://quantri.tueba.edu.vn:10091/lcms/api';
+        const info = await resolveClassStudentInfo(BASE, agent, classStudentId);
+
+        if (!info) {
+            return res.status(404).json({
+                error: 'Không tìm thấy class_id cho Class Student ID này',
+                class_student_id: Number(classStudentId)
+            });
+        }
+
+        res.json({ success: true, ...info });
+    } catch (error) {
+        console.error('[resolve-class-student] Lỗi:', error.message);
+        if (error.response) {
+            res.status(error.response.status).json({ error: 'Lỗi khi dò class_id', details: error.response.data });
+        } else {
+            res.status(500).json({ error: 'Lỗi server', details: error.message });
+        }
+    }
+});
+
+// Endpoint lấy danh sách môn và các bài học trong class_id
+app.get('/api/class-lessons', async (req, res) => {
+    let classId = req.query.class_id;
+    let classStudentId = req.query.class_student_id;
+
+    try {
+        const agent = new (require('https').Agent)({ rejectUnauthorized: false });
+        const BASE = 'https://quantri.tueba.edu.vn:10091/lcms/api';
+
+        if (!classId && classStudentId) {
+            const classStudentInfo = await resolveClassStudentInfo(BASE, agent, classStudentId);
+            classId = classStudentInfo?.class_id;
+        }
+
+        if (!classId) {
+            return res.status(400).json({ error: 'class_id is required' });
+        }
+
+        if (!classStudentId) {
+            classStudentId = await findClassStudentIdForClass(BASE, agent, classId);
+        }
+
+        if (!classStudentId) {
+            return res.status(409).json({
+                error: 'Môn học này không có bài học nào',
+                details: 'Hãy bấm Cập nhật Token và mở môn học này trên LMS một lần, sau đó quay lại bấm Lấy bài học.'
+            });
+        }
+
+        console.log(`[class-lessons] Bắt đầu lấy danh sách bài học cho class_id: ${classId}${classStudentId ? `, class_student_id: ${classStudentId}` : ''}`);
+
+        let className = `Class ${classId}`;
+        let courseId = null;
+        try {
+            const classResponse = await makeAuthenticatedRequest(() =>
+                axios.get(`${BASE}/class/${classId}?select=id,course_id,name`, { httpsAgent: agent, headers: getHeaders() })
+            );
+
+            const classData = classResponse.data.data || {};
+            className = classData.name || classData.class_name || className;
+            courseId = classData.course_id || null;
+        } catch (error) {
+            console.warn('[class-lessons] Không lấy được thông tin class:', error.response?.status || error.message);
+        }
+
+        const limit = 1000;
+        const trackingData = [];
+        const seenTrackingIds = new Set();
+
+        for (let page = 1; page <= 50; page++) {
+            const trackingUrl = buildClassTrackingUrl(
+                BASE,
+                classId,
+                classStudentId,
+                'id,class_student_id,class_id,lesson_id,lesson_name,video_duration,test_results,completed',
+                page,
+                limit
+            );
+            const trackingResponse = await makeAuthenticatedRequest(() =>
+                axios.get(trackingUrl, { httpsAgent: agent, headers: getHeaders() })
+            );
+
+            const pageData = trackingResponse.data.data || [];
+            pageData.forEach(item => {
+                const trackingId = Number(item.id);
+                if (!trackingId || seenTrackingIds.has(trackingId)) return;
+                seenTrackingIds.add(trackingId);
+                trackingData.push(item);
+            });
+
+            if (pageData.length < limit) break;
+        }
+
+        let lessons = trackingData
+            .filter(item => item.lesson_id)
+            .map(item => {
+                const isVideo = Number(item.video_duration || 0) > 0;
+                return {
+                    id: item.id,
+                    tracking_id: item.id,
+                    video_id: isVideo ? item.id : null,
+                    title: item.lesson_name || `Bài ${item.lesson_id}`,
+                    lesson_id: Number(item.lesson_id),
+                    class_id: Number(item.class_id || classId),
+                    class_student_id: Number(item.class_student_id || classStudentId),
+                    course_id: courseId,
+                    completed: item.completed || 0,
+                    video_duration: item.video_duration || 0,
+                    test_results: item.test_results || null
+                };
+            });
+
+        lessons.sort((a, b) => {
+            if (a.tracking_id && b.tracking_id) return a.tracking_id - b.tracking_id;
+            if (a.id && b.id) return a.id - b.id;
+            return String(a.title || '').localeCompare(String(b.title || ''), 'vi');
+        });
+
+        res.json({
+            success: true,
+            class_id: Number(classId),
+            class_name: className,
+            course_id: courseId,
+            total_lessons: lessons.length,
+            source_counts: { tracking: trackingData.length },
+            lessons
+        });
+    } catch (error) {
+        console.error('[class-lessons] Lỗi:', error.message);
+        if (error.response) {
+            res.status(error.response.status).json({ error: 'Lỗi khi lấy danh sách môn/bài học', details: error.response.data });
+        } else {
+            res.status(500).json({ error: 'Lỗi server', details: error.message });
+        }
+    }
+});
+
 // Endpoint lấy toàn bộ câu hỏi của 1 môn học theo class_id
 app.get('/api/class-questions', async (req, res) => {
     const classId = req.query.class_id;
+    const classStudentId = req.query.class_student_id;
     if (!classId) {
         return res.status(400).json({ error: 'class_id is required' });
     }
@@ -437,7 +928,7 @@ app.get('/api/class-questions', async (req, res) => {
     try {
         const agent = new (require('https').Agent)({ rejectUnauthorized: false });
         const BASE = 'https://quantri.tueba.edu.vn:10091/lcms/api';
-        console.log(`[class-questions] Bắt đầu lấy câu hỏi cho class_id: ${classId}`);
+        console.log(`[class-questions] Bắt đầu lấy câu hỏi cho class_id: ${classId}${classStudentId ? `, class_student_id: ${classStudentId}` : ''}`);
 
         // Bước 1: Lấy thông tin class (tên môn + course_id)
         const classResponse = await makeAuthenticatedRequest(() =>
@@ -460,10 +951,8 @@ app.get('/api/class-questions', async (req, res) => {
         }
 
         // Bước 2: Lấy tracking của cả lớp → tìm các lesson quiz (có test_results)
-        console.log(`[class-questions] Đang lấy tracking class_id=${classId}...`);
-        const trackingUrl = `${BASE}/class-student-tracking/?order=ASC&orderby=id&limit=1000&paged=1` +
-            `&select=lesson_id,lesson_name,test_results` +
-            `&condition%5B0%5D%5Bkey%5D=class_id&condition%5B0%5D%5Bvalue%5D=${classId}&condition%5B0%5D%5Bcompare%5D==`;
+        console.log(`[class-questions] Đang lấy tracking class_id=${classId}${classStudentId ? `, class_student_id=${classStudentId}` : ''}...`);
+        const trackingUrl = buildClassTrackingUrl(BASE, classId, classStudentId, 'lesson_id,lesson_name,test_results');
 
         const trackingResponse = await makeAuthenticatedRequest(() =>
             axios.get(trackingUrl, { httpsAgent: agent, headers: getHeaders() })
@@ -570,7 +1059,7 @@ app.get('/api/class-questions', async (req, res) => {
 // ===== AUTO BYPASS ALL VIDEOS IN A CLASS =====
 app.post('/api/auto-bypass', async (req, res) => {
     try {
-        const { class_id } = req.body;
+        const { class_id, class_student_id } = req.body;
         if (!class_id) {
             return res.status(400).json({ error: 'class_id is required' });
         }
@@ -578,12 +1067,10 @@ app.post('/api/auto-bypass', async (req, res) => {
         const agent = new (require('https').Agent)({ rejectUnauthorized: false });
         const BASE = 'https://quantri.tueba.edu.vn:10091/lcms/api';
 
-        console.log(`[auto-bypass] Bắt đầu auto bypass cho class_id: ${class_id}`);
+        console.log(`[auto-bypass] Bắt đầu auto bypass cho class_id: ${class_id}${class_student_id ? `, class_student_id: ${class_student_id}` : ''}`);
 
         // B1: Lấy tất cả tracking records của lớp
-        const trackingUrl = `${BASE}/class-student-tracking/?order=ASC&orderby=id&limit=1000&paged=1` +
-            `&select=id,lesson_id,lesson_name,video_duration,time_play_video,completed,last_stopped,max_stopped_time` +
-            `&condition%5B0%5D%5Bkey%5D=class_id&condition%5B0%5D%5Bvalue%5D=${class_id}&condition%5B0%5D%5Bcompare%5D==`;
+        const trackingUrl = buildClassTrackingUrl(BASE, class_id, class_student_id, 'id,lesson_id,lesson_name,video_duration,time_play_video,completed,last_stopped,max_stopped_time');
 
         const trackingResponse = await makeAuthenticatedRequest(() =>
             axios.get(trackingUrl, { httpsAgent: agent, headers: getHeaders() })

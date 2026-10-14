@@ -6,7 +6,7 @@
     <title>TUEBA Helper – LMS Tool</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=3">
+    <link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
     <!-- Background blobs -->
@@ -20,26 +20,15 @@
             <div class="logo-wrap">
                 <div>
                     <h1>TUEBA Helper</h1>
-                    <p>Công cụ hỗ trợ học tập · ICTU</p>
+                    <p>Công cụ hỗ trợ học tập</p>
                 </div>
             </div>
             <button id="tokenBtn" class="token-btn">
-                Cập nhật Token
+                Đăng nhập
             </button>
         </header>
 
-        <!-- Tabs -->
-        <nav class="tabs">
-            <button class="tab-btn active" data-tab="answers">
-                Tìm Đáp Án
-            </button>
-            <button class="tab-btn" data-tab="course">
-                Câu Hỏi Môn Học
-            </button>
-            <button class="tab-btn" data-tab="video">
-                Active Video
-            </button>
-        </nav>
+        <section id="capturedClassesPanel" class="captured-classes-panel" style="display:none;"></section>
 
         <!-- Token Modal -->
         <div id="tokenModal" class="modal" style="display:none;">
@@ -53,7 +42,11 @@
                         <span class="auto-login-icon"></span>
                         <span>Đăng nhập tự động</span>
                     </div>
-                    <p class="auto-login-desc">Nhập tài khoản LMS để tự động lấy token</p>
+                    <p class="auto-login-desc">Mở trang LMS chính thức để lấy token hoặc nhập tài khoản trực tiếp</p>
+                    <button type="button" id="officialLoginBtn" class="btn-primary full-width" style="margin-bottom:14px;">
+                        <span class="btn-text"> Mở Trang Đăng Nhập Chính Thức</span>
+                        <span class="btn-loader" style="display:none;"> Đang chờ đăng nhập...</span>
+                    </button>
                     <form id="autoLoginForm">
                         <div class="form-group" style="margin-bottom:14px;">
                             <label for="loginUsername">Tên đăng nhập</label>
@@ -94,129 +87,31 @@
             </div>
         </div>
 
-        <main>
-            <!-- Tab: Find Answers (by lesson_id) -->
-            <div class="tab-content active" id="answersTab">
-                <div class="card">
-                    <div class="card-header">
-                        <h2> Tìm Đáp Án Bài Kiểm Tra</h2>
-                        <p>Nhập Lesson ID để tìm và hiển thị đáp án đúng</p>
-                    </div>
-                    <form id="searchForm">
-                        <div class="form-group">
-                            <label for="lessonId">Lesson ID</label>
-                            <input type="text" id="lessonId" name="lessonId" placeholder="Ví dụ: 2988" required>
-                        </div>
-                        <button type="submit" id="submitBtn" class="btn-primary full-width">
-                            <span class="btn-text"> Tìm Đáp Án</span>
-                            <span class="btn-loader" style="display:none;"> Đang tìm...</span>
-                        </button>
-                    </form>
+        <main id="mainResults" class="workspace-grid">
+            <section class="workspace-panel lesson-panel">
+                <div class="workspace-panel-header">
+                    <h2>Danh sách các bài</h2>
                 </div>
-
-                <div id="loading" class="loading-wrap" style="display:none;">
-                    <div class="spinner"></div>
-                    <p>Đang tìm kiếm đáp án, vui lòng chờ...</p>
+                <div id="lessonListPanel" class="workspace-panel-body lesson-list-panel">
+                    <p class="workspace-empty">Chọn một môn rồi bấm Lấy bài học.</p>
                 </div>
-                <div id="results"></div>
-            </div>
+            </section>
 
-            <!-- Tab: Course Questions (by class_id) -->
-            <div class="tab-content" id="courseTab">
-                <div class="card">
-                    <div class="card-header">
-                        <h2> Lấy Câu Hỏi Toàn Môn</h2>
-                        <p>Nhập Class ID để tổng hợp tất cả câu hỏi của môn học</p>
-                    </div>
-                    <form id="courseForm">
-                        <div class="form-group">
-                            <label for="classId">Class ID</label>
-                            <input type="text" id="classId" name="classId" placeholder="Ví dụ: 2843" required>
-                            <small>Lấy từ URL trang môn học trên LMS</small>
-                        </div>
-                        <button type="submit" id="courseSubmitBtn" class="btn-primary full-width">
-                            <span class="btn-text"> Lấy Câu Hỏi</span>
-                            <span class="btn-loader" style="display:none;"> Đang tải...</span>
-                        </button>
-                    </form>
+            <section class="workspace-panel answer-panel">
+                <div class="workspace-panel-header">
+                    <h2>Kết quả đáp án</h2>
                 </div>
-
-                <div id="courseLoading" class="loading-wrap" style="display:none;">
-                    <div class="spinner"></div>
-                    <p id="courseLoadingMsg">Đang lấy dữ liệu môn học...</p>
+                <div id="answerResultsPanel" class="workspace-panel-body answer-results-panel">
+                    <p class="workspace-empty">Bấm biểu tượng tìm đáp án ở từng bài để xem kết quả.</p>
                 </div>
-
-                <div id="courseResults"></div>
-            </div>
-
-            <!-- Tab: Video Bypass -->
-            <div class="tab-content" id="videoTab">
-                <div class="card">
-                    <div class="card-header">
-                        <h2>️ Active Video</h2>
-                        <p>Đánh dấu video đã xem hoàn thành</p>
-                    </div>
-                    <div class="alert-warning">
-                        ️ <strong>Cảnh báo:</strong> Sử dụng tính năng này có thể vi phạm quy định của trường. Chỉ dùng khi thực sự cần thiết!
-                    </div>
-                    <form id="videoForm">
-                        <div class="form-group">
-                            <label for="trackingId">Tracking ID</label>
-                            <input type="text" id="trackingId" name="trackingId" placeholder="Ví dụ: 2420501" required>
-                            <small>Lấy từ URL hoặc Network tab: class-student-tracking/{id}</small>
-                        </div>
-                        <div class="form-group">
-                            <label for="videoDuration">Thời lượng video (giây) <em style="font-weight:400;opacity:.6;">– tuỳ chọn</em></label>
-                            <input type="number" id="videoDuration" name="videoDuration" placeholder="Để trống để tự lấy từ hệ thống">
-                        </div>
-                        <button type="submit" id="videoSubmitBtn" class="btn-primary btn-orange full-width">
-                            <span class="btn-text">️ Active</span>
-                            <span class="btn-loader" style="display:none;"> Đang xử lý...</span>
-                        </button>
-                    </form>
-                </div>
-
-                <div id="videoLoading" class="loading-wrap" style="display:none;">
-                    <div class="spinner spinner-orange"></div>
-                    <p>Đang xử lý bypass video...</p>
-                </div>
-                <div id="videoResults"></div>
-
-                <!-- Auto Bypass Section -->
-                <div class="card" style="margin-top:24px;">
-                    <div class="card-header">
-                        <h2> Auto Bypass Toàn Bộ Video</h2>
-                        <p>Nhập Class ID để tự động bypass tất cả video trong môn học</p>
-                    </div>
-                    <div class="alert-warning">
-                        ️ Tool sẽ tự động đánh dấu <strong>tất cả video</strong> trong môn là đã xem. Hãy kiểm tra kỹ trước khi dùng!
-                    </div>
-                    <form id="autoBypassForm">
-                        <div class="form-group">
-                            <label for="autoClassId">Class ID</label>
-                            <input type="text" id="autoClassId" name="autoClassId" placeholder="Ví dụ: 2843" required>
-                            <small>Lấy từ URL trang môn học trên LMS</small>
-                        </div>
-                        <button type="submit" id="autoBypassBtn" class="btn-primary btn-orange full-width">
-                            <span class="btn-text"> Auto Bypass Tất Cả</span>
-                            <span class="btn-loader" style="display:none;"> Đang xử lý...</span>
-                        </button>
-                    </form>
-                </div>
-
-                <div id="autoBypassLoading" class="loading-wrap" style="display:none;">
-                    <div class="spinner spinner-orange"></div>
-                    <p id="autoBypassMsg">Đang lấy danh sách video...</p>
-                </div>
-                <div id="autoBypassResults"></div>
-            </div>
+            </section>
         </main>
 
         <footer>
-            <p>Made with ️ for TUEBA Students · ICTU</p>
+            <p>Made with ️ for TUEBA Students</p>
         </footer>
     </div>
 
-    <script src="app.js?v=4"></script>
+    <script src="app.js?v=45"></script>
 </body>
 </html>
